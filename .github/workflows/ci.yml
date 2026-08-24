@@ -40,13 +40,13 @@ jobs:
             c-compiler: clang
             cxx-compiler: clang++
             rust: stable
-          - os: ubuntu-20.04
-            c-compiler: gcc-7
-            cxx-compiler: g++-7
+          - os: ubuntu-22.04
+            c-compiler: gcc-11
+            cxx-compiler: g++-11
             rust: stable
-          - os: ubuntu-20.04
-            c-compiler: clang-7
-            cxx-compiler: clang++-7
+          - os: ubuntu-22.04
+            c-compiler: clang-14
+            cxx-compiler: clang++-14
             rust: stable
 
     runs-on: ${{ matrix.os }}
@@ -58,17 +58,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install clang
 
-      - if: matrix.c-compiler == 'clang-7'
-        name: Install clang-7
+      - if: matrix.c-compiler == 'clang-14'
+        name: Install clang-14
         run: |
           sudo apt-get update
-          sudo apt-get install clang-7
+          sudo apt-get install clang-14
 
-      - if: matrix.c-compiler == 'gcc-7'
-        name: Install gcc-7
+      - if: matrix.c-compiler == 'gcc-11'
+        name: Install gcc-11
         run: |
           sudo apt-get update
-          sudo apt-get install gcc-7 g++-7
+          sudo apt-get install gcc-11 g++-11
 
       - uses: dtolnay/rust-toolchain@v1
         with:

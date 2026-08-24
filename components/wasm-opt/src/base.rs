@@ -18,6 +18,11 @@ impl Module {
     pub fn apply_features(&mut self, enabled_features: FeatureSet, disabled_features: FeatureSet) {
         wasm::applyFeatures(self.0.pin_mut(), enabled_features.0, disabled_features.0);
     }
+
+    /// Discards the type order of the module as it was read.
+    pub fn clear_type_indices(&mut self) {
+        wasm::clearTypeIndices(self.0.pin_mut());
+    }
 }
 
 pub struct ModuleReader(cxx::UniquePtr<wasm::ModuleReader>);
@@ -85,6 +90,10 @@ pub struct ModuleWriter(cxx::UniquePtr<wasm::ModuleWriter>);
 impl ModuleWriter {
     pub fn new() -> ModuleWriter {
         ModuleWriter(wasm::newModuleWriter())
+    }
+
+    pub fn new_with_options(options: PassOptions) -> ModuleWriter {
+        ModuleWriter(wasm::newModuleWriterWithOptions(options.0))
     }
 
     pub fn set_debug_info(&mut self, debug: bool) {
@@ -187,6 +196,11 @@ impl InliningOptions {
         this.setFlexibleInlineMaxSize(size);
     }
 
+    pub fn set_max_combined_binary_size(&mut self, size: u32) {
+        let this = self.0.pin_mut();
+        this.setMaxCombinedBinarySize(size);
+    }
+
     pub fn set_allow_functions_with_loops(&mut self, allow: bool) {
         let this = self.0.pin_mut();
         this.setAllowFunctionsWithLoops(allow);
@@ -253,6 +267,16 @@ impl PassOptions {
     pub fn set_debug_info(&mut self, debug_info: bool) {
         let this = self.0.pin_mut();
         this.setDebugInfo(debug_info);
+    }
+
+    pub fn set_generate_stack_ir(&mut self, generate_stack_ir: bool) {
+        let this = self.0.pin_mut();
+        this.setGenerateStackIR(generate_stack_ir);
+    }
+
+    pub fn set_optimize_stack_ir(&mut self, optimize_stack_ir: bool) {
+        let this = self.0.pin_mut();
+        this.setOptimizeStackIR(optimize_stack_ir);
     }
 
     pub fn set_arguments(&mut self, key: &str, value: &str) {
@@ -324,13 +348,22 @@ pub enum Feature {
     ExtendedConst = 1 << 13,
     Strings = 1 << 14,
     MultiMemory = 1 << 15,
+    StackSwitching = 1 << 16,
+    SharedEverything = 1 << 17,
+    Fp16 = 1 << 18,
+    BulkMemoryOpt = 1 << 19,
+    CallIndirectOverlong = 1 << 20,
+    CustomDescriptors = 1 << 21,
+    AcquireReleaseAtomics = 1 << 22,
+    CustomPageSizes = 1 << 23,
+    Multibyte = 1 << 24,
+    WideArithmetic = 1 << 25,
+    CompactImports = 1 << 26,
+    RelaxedAtomics = 1 << 27,
     // MVP has the same value as None.
     // Mvp = 0,
     Default = 1 << 5 | 1 << 1, // SignExt | MutableGlobals,
-    // GCNNLocals are opt-in: merely asking for "All" does not apply them. To
-    // get all possible values use AllPossible. See setAll() below for more
-    // details.
-    All = (1 << 16) - 1,
+    All = (1 << 28) - 1,
 }
 
 pub struct PassRunner<'wasm>(cxx::UniquePtr<wasm::PassRunner<'wasm>>);
@@ -351,6 +384,14 @@ impl<'wasm> PassRunner<'wasm> {
 
         let this = self.0.pin_mut();
         this.add(pass_name);
+    }
+
+    pub fn add_with_argument(&mut self, pass_name: &str, pass_arg: &str) {
+        let_cxx_string!(pass_name = pass_name);
+        let_cxx_string!(pass_arg = pass_arg);
+
+        let this = self.0.pin_mut();
+        this.addWithArgument(pass_name, pass_arg);
     }
 
     pub fn add_default_optimization_passes(&mut self) {

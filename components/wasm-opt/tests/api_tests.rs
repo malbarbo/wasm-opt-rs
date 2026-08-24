@@ -50,6 +50,7 @@ fn test_inlining_options_defaults() -> anyhow::Result<()> {
     inlining.set_always_inline_max_size(inlining_defaults.always_inline_max_size);
     inlining.set_one_caller_inline_max_size(inlining_defaults.one_caller_inline_max_size);
     inlining.set_flexible_inline_max_size(inlining_defaults.flexible_inline_max_size);
+    inlining.set_max_combined_binary_size(inlining_defaults.max_combined_binary_size);
     inlining.set_allow_functions_with_loops(inlining_defaults.allow_functions_with_loops);
     inlining.set_partial_inlining_ifs(inlining_defaults.partial_inlining_ifs);
 
@@ -102,10 +103,12 @@ fn optimization_read_module_error_works() -> anyhow::Result<()> {
     let temp_dir = Builder::new().prefix("wasm_opt_tests").tempdir()?;
     let inpath = temp_dir.path().join("infile.wasm");
 
-    let file = File::create(&inpath)?;
-
-    let mut buf_writer = BufWriter::new(&file);
-    buf_writer.write_all(GARBAGE_FILE)?;
+    {
+        let file = File::create(&inpath)?;
+        let mut buf_writer = BufWriter::new(&file);
+        buf_writer.write_all(GARBAGE_FILE)?;
+        buf_writer.flush()?;
+    }
 
     let outpath = temp_dir.path().join("outfile.wasm");
 

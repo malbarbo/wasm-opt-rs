@@ -2,6 +2,8 @@
 #define wasmopt_shims_h
 
 #include "pass.h"
+#include "parsing.h"
+#include "source-map.h"
 #include "wasm-io.h"
 #include "support/colors.h"
 #include "wasm-validator.h"
@@ -34,6 +36,12 @@ namespace wasm_shims {
 
   std::unique_ptr<Module> newModule() {
     return std::make_unique<Module>();
+  }
+
+  // Binaryen's tools drop the type order of the input module unless
+  // `--preserve-type-order` is given.
+  void clearTypeIndices(wasm::Module& wasm) {
+    wasm.typeIndices.clear();
   }
 
   bool validateWasm(wasm::Module& wasm) {
@@ -83,7 +91,13 @@ namespace wasm_shims {
 
 namespace wasm_shims {
   struct ModuleWriter {
+    // Declared before `inner`, which keeps a reference to it.
+    wasm::PassOptions options;
     wasm::ModuleWriter inner;
+
+    ModuleWriter() : options(), inner(options) {}
+    ModuleWriter(const wasm::PassOptions& options)
+      : options(options), inner(this->options) {}
 
     void setDebugInfo(bool debug) {
       inner.setDebugInfo(debug);
@@ -146,6 +160,10 @@ namespace wasm_shims {
       inner.flexibleInlineMaxSize = size;
     }
 
+    void setMaxCombinedBinarySize(uint32_t size) {
+      inner.maxCombinedBinarySize = size;
+    }
+
     void setAllowFunctionsWithLoops(bool allow) {
       inner.allowFunctionsWithLoops = allow;
     }
@@ -204,6 +222,14 @@ namespace wasm_shims {
       inner.debugInfo = debugInfo;
     }
 
+    void setGenerateStackIR(bool generateStackIR) {
+      inner.generateStackIR = generateStackIR;
+    }
+
+    void setOptimizeStackIR(bool optimizeStackIR) {
+      inner.optimizeStackIR = optimizeStackIR;
+    }
+
     void setArguments(std::string& key, std::string& value) {
       inner.arguments[std::move(key)] = std::move(value);
     }
@@ -211,6 +237,11 @@ namespace wasm_shims {
 
   std::unique_ptr<PassOptions> newPassOptions() {
     return std::make_unique<PassOptions>();
+  }
+
+  std::unique_ptr<ModuleWriter>
+  newModuleWriterWithOptions(std::unique_ptr<PassOptions> options) {
+    return std::make_unique<ModuleWriter>(options->inner);
   }
 }
 
@@ -263,6 +294,18 @@ namespace wasm_shims {
     f.push_back(wasm::FeatureSet::Feature::ExtendedConst);
     f.push_back(wasm::FeatureSet::Feature::Strings);
     f.push_back(wasm::FeatureSet::Feature::MultiMemory);
+    f.push_back(wasm::FeatureSet::Feature::StackSwitching);
+    f.push_back(wasm::FeatureSet::Feature::SharedEverything);
+    f.push_back(wasm::FeatureSet::Feature::FP16);
+    f.push_back(wasm::FeatureSet::Feature::BulkMemoryOpt);
+    f.push_back(wasm::FeatureSet::Feature::CallIndirectOverlong);
+    f.push_back(wasm::FeatureSet::Feature::CustomDescriptors);
+    f.push_back(wasm::FeatureSet::Feature::AcquireReleaseAtomics);
+    f.push_back(wasm::FeatureSet::Feature::CustomPageSizes);
+    f.push_back(wasm::FeatureSet::Feature::Multibyte);
+    f.push_back(wasm::FeatureSet::Feature::WideArithmetic);
+    f.push_back(wasm::FeatureSet::Feature::CompactImports);
+    f.push_back(wasm::FeatureSet::Feature::RelaxedAtomics);
     // This is not part of the Rust API because it has the same value as None.
     // f.push_back(wasm::FeatureSet::Feature::MVP);
     f.push_back(wasm::FeatureSet::Feature::Default);
@@ -286,6 +329,10 @@ namespace wasm_shims {
 
     void add(std::string& passName) {
       inner.add(std::move(passName));
+    }
+
+    void addWithArgument(std::string& passName, std::string& passArg) {
+      inner.add(std::move(passName), std::move(passArg));
     }
 
     void addDefaultOptimizationPasses() {
@@ -316,11 +363,12 @@ namespace wasm_shims {
 
     // The size assertion will fail when `InliningOptions` fields change,
     // which indicates the current test need to be updated.
-    assert(sizeof(inliningOptionsDefaults->inner) == 20);
+    assert(sizeof(inliningOptionsDefaults->inner) == 24);
     
     bool isEqual = (inlining->inner.alwaysInlineMaxSize == inliningOptionsDefaults->inner.alwaysInlineMaxSize)
       && (inlining->inner.oneCallerInlineMaxSize == inliningOptionsDefaults->inner.oneCallerInlineMaxSize)
       && (inlining->inner.flexibleInlineMaxSize == inliningOptionsDefaults->inner.flexibleInlineMaxSize)
+      && (inlining->inner.maxCombinedBinarySize == inliningOptionsDefaults->inner.maxCombinedBinarySize)
       && (inlining->inner.allowFunctionsWithLoops == inliningOptionsDefaults->inner.allowFunctionsWithLoops)
       && (inlining->inner.partialInliningIfs == inliningOptionsDefaults->inner.partialInliningIfs);
     
@@ -350,6 +398,7 @@ namespace wasm_shims {
       && (passOptions->inner.inlining.alwaysInlineMaxSize == passOptionsDefaults.inlining.alwaysInlineMaxSize)
       && (passOptions->inner.inlining.oneCallerInlineMaxSize == passOptionsDefaults.inlining.oneCallerInlineMaxSize)
       && (passOptions->inner.inlining.flexibleInlineMaxSize == passOptionsDefaults.inlining.flexibleInlineMaxSize)
+      && (passOptions->inner.inlining.maxCombinedBinarySize == passOptionsDefaults.inlining.maxCombinedBinarySize)
       && (passOptions->inner.inlining.allowFunctionsWithLoops == passOptionsDefaults.inlining.allowFunctionsWithLoops)
       && (passOptions->inner.inlining.partialInliningIfs == passOptionsDefaults.inlining.partialInliningIfs);
    

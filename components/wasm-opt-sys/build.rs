@@ -5,7 +5,7 @@ use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 fn main() -> anyhow::Result<()> {
-    check_cxx17_support()?;
+    check_cxx20_support()?;
 
     let output_dir = std::env::var("OUT_DIR")?;
     let output_dir = Path::new(&output_dir);
@@ -15,10 +15,17 @@ fn main() -> anyhow::Result<()> {
     let src_dir = binaryen_dir.join("src");
     let src_files = get_src_files(&src_dir)?;
 
-    #[cfg(feature = "dwarf")]
+    // Binaryen's `support/suffix_tree` uses LLVM headers even when the DWARF
+    // support is not built, so the include path is always needed.
     let llvm_dir = binaryen_dir.join("third_party/llvm-project");
+    let llvm_include = llvm_dir.join("include");
     #[cfg(feature = "dwarf")]
     let llvm_files = get_llvm_files(&llvm_dir)?;
+    #[cfg(not(feature = "dwarf"))]
+    let llvm_files = get_llvm_support_files(&llvm_dir)?;
+
+    // `wasm-interpreter.h` includes `fp16.h`.
+    let fp16_include = binaryen_dir.join("third_party/FP16/include");
 
     let tools_dir = src_dir.join("tools");
     let wasm_opt_src = tools_dir.join("wasm-opt.cpp");
@@ -37,12 +44,8 @@ fn main() -> anyhow::Result<()> {
     CFG.exported_header_dirs.push(&src_dir);
     CFG.exported_header_dirs.push(&tools_dir);
     CFG.exported_header_dirs.push(&output_dir);
-
-    #[cfg(feature = "dwarf")]
-    {
-        let llvm_include = llvm_dir.join("include");
-        CFG.exported_header_dirs.push(&llvm_include);
-    }
+    CFG.exported_header_dirs.push(&llvm_include);
+    CFG.exported_header_dirs.push(&fp16_include);
 
     let mut builder = cxx_build::bridge("src/lib.rs");
 
@@ -51,7 +54,7 @@ fn main() -> anyhow::Result<()> {
 
         let flags: &[_] = if target_env != "msvc" {
             &[
-                "-std=c++17",
+                "-std=c++20",
                 "-w",
                 "-Wno-unused-parameter",
                 "-DTHROW_ON_FATAL",
@@ -61,7 +64,7 @@ fn main() -> anyhow::Result<()> {
             ]
         } else {
             &[
-                "/std:c++17",
+                "/std:c++20",
                 "/w",
                 "/DTHROW_ON_FATAL",
                 #[cfg(feature = "dwarf")]
@@ -81,7 +84,6 @@ fn main() -> anyhow::Result<()> {
         .file(wasm_opt_src)
         .file(wasm_intrinsics_src);
 
-    #[cfg(feature = "dwarf")]
     builder.files(&llvm_files);
 
     builder.compile("wasm-opt-cc");
@@ -155,40 +157,65 @@ fn get_src_files(src_dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
     let wasm_files = [
         "literal.cpp",
         "parsing.cpp",
+        "source-map.cpp",
         "wasm-binary.cpp",
         "wasm-debug.cpp",
         "wasm-emscripten.cpp",
-        "wasm-interpreter.cpp",
-        "wasm-ir-builder.cpp",
         "wasm-io.cpp",
+        "wasm-ir-builder.cpp",
         "wasm-stack.cpp",
-        "wasm-s-parser.cpp",
+        "wasm-stack-opts.cpp",
         "wasm-type.cpp",
+        "wasm-type-shape.cpp",
         "wasm-validator.cpp",
         "wasm.cpp",
-        "wat-lexer.cpp",
-        "wat-parser.cpp",
     ];
     let wasm_files = wasm_files.iter().map(|f| wasm_dir.join(f));
 
+    let parser_dir = src_dir.join("parser");
+    let parser_files = [
+        "context-decls.cpp",
+        "context-defs.cpp",
+        "parse-1-decls.cpp",
+        "parse-2-typedefs.cpp",
+        "parse-3-implicit-types.cpp",
+        "parse-4-module-types.cpp",
+        "parse-5-defs.cpp",
+        "wast-parser.cpp",
+        "wat-parser.cpp",
+    ];
+    let parser_files = parser_files.iter().map(|f| parser_dir.join(f));
+
     let support_dir = src_dir.join("support");
     let support_files = [
+        "archive.cpp",
         "bits.cpp",
         "colors.cpp",
         "command-line.cpp",
         "debug.cpp",
         "dfa_minimization.cpp",
         "file.cpp",
+        "int128.cpp",
+        "intervals.cpp",
+        "istring.cpp",
+        "json.cpp",
+        "name.cpp",
+        "path.cpp",
         "safe_integer.cpp",
+        "string.cpp",
+        "suffix_tree.cpp",
+        "suffix_tree_node.cpp",
         "threads.cpp",
         "utilities.cpp",
-        "istring.cpp",
     ];
     let support_files = support_files.iter().map(|f| support_dir.join(f));
 
     let ir_dir = src_dir.join("ir");
     let ir_files = [
+        "abstract.cpp",
+        "constraint.cpp",
         "drop.cpp",
+        "effects.cpp",
         "eh-utils.cpp",
         "ExpressionManipulator.cpp",
         "ExpressionAnalyzer.cpp",
@@ -197,11 +224,18 @@ fn get_src_files(src_dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
         "LocalStructuralDominance.cpp",
         "lubs.cpp",
         "memory-utils.cpp",
+        "metadata.cpp",
+        "module-splitting.cpp",
         "module-utils.cpp",
         "names.cpp",
         "possible-contents.cpp",
+        "principal-type.cpp",
         "properties.cpp",
+        "public-type-validator.cpp",
         "ReFinalize.cpp",
+        "return-utils.cpp",
+        "runtime-global.cpp",
+        "runtime-table.cpp",
         "stack-utils.cpp",
         "table-utils.cpp",
         "type-updating.cpp",
@@ -212,11 +246,16 @@ fn get_src_files(src_dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
     let passes_files = get_files_from_dir(&passes_dir)?;
 
     let fuzzing_dir = src_dir.join("tools/fuzzing");
-    let fuzzing_files = ["fuzzing.cpp", "random.cpp", "heap-types.cpp"];
+    let fuzzing_files = [
+        "fuzzing.cpp",
+        "heap-types.cpp",
+        "parameters.cpp",
+        "random.cpp",
+    ];
     let fuzzing_files = fuzzing_files.iter().map(|f| fuzzing_dir.join(f));
 
     let asmjs_dir = src_dir.join("asmjs");
-    let asmjs_files = ["asm_v_wasm.cpp", "shared-constants.cpp"];
+    let asmjs_files = ["asm_v_wasm.cpp", "asmangle.cpp", "shared-constants.cpp"];
     let asmjs_files = asmjs_files.iter().map(|f| asmjs_dir.join(f));
 
     let cfg_dir = src_dir.join("cfg");
@@ -229,6 +268,7 @@ fn get_src_files(src_dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
         .into_iter()
         .chain(analysis_files)
         .chain(wasm_files)
+        .chain(parser_files)
         .chain(support_files)
         .chain(ir_files)
         .chain(passes_files)
@@ -344,32 +384,44 @@ fn create_config_header() -> anyhow::Result<()> {
     let output_dir = Path::new(&output_dir);
     let config_file = output_dir.join("config.h");
 
-    let config_text = "#define PROJECT_VERSION \"116 (version_116)\"";
+    let config_text = "#define PROJECT_VERSION \"132 (version_132)\"";
 
     fs::write(&config_file, config_text)?;
 
     Ok(())
 }
 
-fn check_cxx17_support() -> anyhow::Result<()> {
+fn check_cxx20_support() -> anyhow::Result<()> {
     let mut builder = cc::Build::new();
     builder.cpp(true);
 
     let target_env = std::env::var("CARGO_CFG_TARGET_ENV")?;
-    let cxx17_flag = if target_env != "msvc" {
-        "-std=c++17"
+    let cxx20_flag = if target_env != "msvc" {
+        "-std=c++20"
     } else {
-        "/std:c++17"
+        "/std:c++20"
     };
 
-    if !builder.is_flag_supported(cxx17_flag)? {
+    if !builder.is_flag_supported(cxx20_flag)? {
         return Err(anyhow::anyhow!(
             "C++ compiler does not support `{}` flag",
-            cxx17_flag
+            cxx20_flag
         ));
     }
 
     Ok(())
+}
+
+/// The subset of the LLVM sources needed even when DWARF support is not built.
+///
+/// Binaryen's `support/suffix_tree`, used by the `outlining` pass, uses LLVM's
+/// containers regardless of whether DWARF support is enabled.
+#[cfg(not(feature = "dwarf"))]
+fn get_llvm_support_files(llvm_dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
+    Ok(vec![
+        llvm_dir.join("ErrorHandling.cpp"),
+        llvm_dir.join("SmallVector.cpp"),
+    ])
 }
 
 #[cfg(feature = "dwarf")]

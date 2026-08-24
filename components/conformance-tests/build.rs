@@ -50,8 +50,13 @@ fn build_binaryen_wasm_opt() -> Result<()> {
         bail!("cmake failed");
     }
 
+    let jobs = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+
     let make_status = Command::new("make")
         .current_dir(&dirs.binaryen_build)
+        .arg(format!("-j{}", jobs))
         .status()?;
 
     if !make_status.success() {

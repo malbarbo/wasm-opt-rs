@@ -15,10 +15,12 @@ fn pass_arg_works() -> anyhow::Result<()> {
     let temp_dir = Builder::new().prefix("wasm_opt_tests").tempdir()?;
     let inpath = temp_dir.path().join("infile.wasm");
 
-    let infile = File::create(&inpath)?;
-
-    let mut buf_writer = BufWriter::new(&infile);
-    buf_writer.write_all(MULTISIG_WASM)?;
+    {
+        let infile = File::create(&inpath)?;
+        let mut buf_writer = BufWriter::new(&infile);
+        buf_writer.write_all(MULTISIG_WASM)?;
+        buf_writer.flush()?;
+    }
 
     let outfile = temp_dir.path().join("outfile.wasm");
 
@@ -51,10 +53,12 @@ fn pass_arg_unsupported_works() -> anyhow::Result<()> {
     let temp_dir = Builder::new().prefix("wasm_opt_tests").tempdir()?;
     let inpath = temp_dir.path().join("infile.wasm");
 
-    let infile = File::create(&inpath)?;
-
-    let mut buf_writer = BufWriter::new(&infile);
-    buf_writer.write_all(WASM_FILE)?;
+    {
+        let infile = File::create(&inpath)?;
+        let mut buf_writer = BufWriter::new(&infile);
+        buf_writer.write_all(WASM_FILE)?;
+        buf_writer.flush()?;
+    }
 
     let outfile = temp_dir.path().join("outfile.wasm");
 

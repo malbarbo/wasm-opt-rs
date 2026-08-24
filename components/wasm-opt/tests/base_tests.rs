@@ -122,9 +122,12 @@ fn module_read_garbage_error_works() -> anyhow::Result<()> {
     let temp_dir = Builder::new().prefix("wasm_opt_tests").tempdir()?;
     let path = temp_dir.path().join("hello_world_bad.wat");
 
-    let temp_file = File::create(&path)?;
-    let mut buf_writer = BufWriter::new(&temp_file);
-    buf_writer.write_all(GARBAGE_FILE)?;
+    {
+        let temp_file = File::create(&path)?;
+        let mut buf_writer = BufWriter::new(&temp_file);
+        buf_writer.write_all(GARBAGE_FILE)?;
+        buf_writer.flush()?;
+    }
 
     let mut m = Module::new();
     let mut reader = ModuleReader::new();

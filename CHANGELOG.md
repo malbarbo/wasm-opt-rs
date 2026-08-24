@@ -1,3 +1,31 @@
+## 0.132.0
+
+- Updated Binaryen to [version 132](https://github.com/WebAssembly/binaryen/blob/main/CHANGELOG.md#v132),
+  from version 116.
+- **Building now requires a C++20 compiler**, as required by Binaryen.
+- New wasm features: `stack-switching`, `shared-everything`, `fp16`,
+  `bulk-memory-opt`, `call-indirect-overlong`, `custom-descriptors`,
+  `acquire-release-atomics`, `custom-page-sizes`, `multibyte`,
+  `wide-arithmetic`, `compact-imports` and `relaxed-atomics`.
+- `Feature::MultiMemory` is now spelled `multimemory` (was `multi-memory`),
+  following Binaryen.
+- Added the passes registered by Binaryen 132, and removed the passes it no
+  longer registers: `generate-stack-ir`, `optimize-stack-ir`, `print-stack-ir`,
+  `legalize-js-interface-minimally`, `jspi`, `mod-asyncify-never-unwind` and
+  `mod-asyncify-always-and-only-unwind`.
+
+  StackIR is no longer produced by passes; it is generated while writing the
+  module, controlled by the new `PassOptions::allow_stack_ir` option
+  (`--no-stack-ir` on the command line), and enabled by default at optimize
+  level 2 or shrink level 1, as in the `wasm-opt` command line tool.
+- Added `InliningOptions::max_combined_binary_size`
+  (`--inline-max-combined-binary-size`).
+- Added `ReaderOptions::preserve_type_order` (`--preserve-type-order`).
+  As `wasm-opt` does, the type order of the input module is now discarded
+  unless this is set.
+- A pass argument named after a pass, e.g. `--pass-arg extract-function@NAME`,
+  is now attached to that pass instance, as Binaryen requires.
+
 ## 0.116.1
 
 - [Fixed build on wasm32-wasmi](https://github.com/brson/wasm-opt-rs/pull/165).

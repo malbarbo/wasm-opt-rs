@@ -209,6 +209,15 @@ fn parse_command_args(command: Command) -> Result<ParsedCliArgs, Error> {
             "--debuginfo" | "-g" => {
                 opts.debug_info(true);
             }
+            "--preserve-type-order" => {
+                opts.preserve_type_order(true);
+            }
+            "--no-stack-ir" => {
+                opts.allow_stack_ir(false);
+            }
+            "--inline-max-combined-binary-size" | "-imcbs" => {
+                opts.max_combined_binary_size(parse_u32(&mut args)?);
+            }
             "--always-inline-max-function-size" | "-aimfs" => {
                 opts.always_inline_max_size(parse_u32(&mut args)?);
             }

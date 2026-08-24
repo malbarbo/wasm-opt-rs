@@ -54,14 +54,9 @@ cargo build && cargo test
 
 ## Toolchain requirements
 
-Requires Rust 1.48+ and a C++ compiler with C++17 support.
+Requires Rust 1.48+ and a C++ compiler with C++20 support,
+which is what Binaryen itself requires.
 It does not require CMake or other C++ build tools.
-
-These are the earliest C++ compiler versions known to work:
-
-- gcc 7
-- clang 7
-- Visual Studio 2019
 
 
 

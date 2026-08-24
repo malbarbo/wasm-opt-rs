@@ -121,6 +121,10 @@ impl OptimizationOptions {
             .map_err(|e| OptimizationError::Read {
                 source: Box::from(e),
             })?;
+
+            if !self.reader.preserve_type_order {
+                m.clear_type_indices();
+            }
         }
 
         {
@@ -143,7 +147,7 @@ impl OptimizationOptions {
         }
 
         {
-            let mut writer = ModuleWriter::new();
+            let mut writer = ModuleWriter::new_with_options(self.translate_pass_options());
             writer.set_debug_info(self.passopts.debug_info);
 
             if let Some(filename) = outfile_sourcemap {
@@ -183,22 +187,26 @@ impl OptimizationOptions {
             pass_runner.add_default_optimization_passes();
         }
 
-        self.passes
-            .more_passes
-            .iter()
-            .for_each(|pass| pass_runner.add(pass.name()));
+        // Binaryen stores an argument named after a pass on the pass instance
+        // itself, so it has to be provided when the pass is added.
+        self.passes.more_passes.iter().for_each(|pass| {
+            match self.passopts.arguments.get(pass.name()) {
+                Some(arg) => pass_runner.add_with_argument(pass.name(), arg),
+                None => pass_runner.add(pass.name()),
+            }
+        });
 
         pass_runner.run();
     }
 
     fn run_until_convergence(&self, m: &mut Module) -> anyhow::Result<()> {
-        let mut last_size = Self::get_module_size(m)?;
+        let mut last_size = self.get_module_size(m)?;
         let mut current_size;
 
         loop {
             self.create_and_run_pass_runner(m);
 
-            current_size = Self::get_module_size(m)?;
+            current_size = self.get_module_size(m)?;
 
             if current_size >= last_size {
                 break;
@@ -210,11 +218,11 @@ impl OptimizationOptions {
         Ok(())
     }
 
-    fn get_module_size(m: &mut Module) -> anyhow::Result<usize> {
+    fn get_module_size(&self, m: &mut Module) -> anyhow::Result<usize> {
         let tempdir = tempfile::tempdir()?;
         let temp_outfile = tempdir.path().join("wasm_opt_temp_outfile.wasm");
 
-        let mut writer = ModuleWriter::new();
+        let mut writer = ModuleWriter::new_with_options(self.translate_pass_options());
         writer.write_binary(m, &temp_outfile)?;
 
         let file_size = fs::read(&temp_outfile)?.len();
@@ -241,6 +249,13 @@ impl OptimizationOptions {
         opts.set_zero_filled_memory(self.passopts.zero_filled_memory);
         opts.set_debug_info(self.passopts.debug_info);
 
+        // Binaryen's CLI turns StackIR on based on the optimize and shrink
+        // levels, after parsing all the arguments.
+        let stack_ir = self.passopts.allow_stack_ir
+            && (self.passopts.optimize_level as i32 >= 2 || self.passopts.shrink_level as i32 >= 1);
+        opts.set_generate_stack_ir(stack_ir);
+        opts.set_optimize_stack_ir(stack_ir);
+
         self.passopts
             .arguments
             .iter()
@@ -250,6 +265,7 @@ impl OptimizationOptions {
         inlining.set_always_inline_max_size(self.inlining.always_inline_max_size);
         inlining.set_one_caller_inline_max_size(self.inlining.one_caller_inline_max_size);
         inlining.set_flexible_inline_max_size(self.inlining.flexible_inline_max_size);
+        inlining.set_max_combined_binary_size(self.inlining.max_combined_binary_size);
         inlining.set_allow_functions_with_loops(self.inlining.allow_functions_with_loops);
         inlining.set_partial_inlining_ifs(self.inlining.partial_inlining_ifs);
 
@@ -317,6 +333,18 @@ fn convert_feature(feature: &Feature) -> BaseFeature {
         Feature::ExtendedConst => BaseFeature::ExtendedConst,
         Feature::Strings => BaseFeature::Strings,
         Feature::MultiMemory => BaseFeature::MultiMemory,
+        Feature::StackSwitching => BaseFeature::StackSwitching,
+        Feature::SharedEverything => BaseFeature::SharedEverything,
+        Feature::Fp16 => BaseFeature::Fp16,
+        Feature::BulkMemoryOpt => BaseFeature::BulkMemoryOpt,
+        Feature::CallIndirectOverlong => BaseFeature::CallIndirectOverlong,
+        Feature::CustomDescriptors => BaseFeature::CustomDescriptors,
+        Feature::AcquireReleaseAtomics => BaseFeature::AcquireReleaseAtomics,
+        Feature::CustomPageSizes => BaseFeature::CustomPageSizes,
+        Feature::Multibyte => BaseFeature::Multibyte,
+        Feature::WideArithmetic => BaseFeature::WideArithmetic,
+        Feature::CompactImports => BaseFeature::CompactImports,
+        Feature::RelaxedAtomics => BaseFeature::RelaxedAtomics,
         Feature::Mvp => BaseFeature::None,
         Feature::Default => BaseFeature::Default,
         Feature::All => BaseFeature::All,

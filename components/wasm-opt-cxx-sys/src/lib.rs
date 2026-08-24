@@ -41,6 +41,8 @@ pub mod wasm {
 
         fn newModule() -> UniquePtr<Module>;
 
+        fn clearTypeIndices(wasm: Pin<&mut Module>);
+
         fn validateWasm(wasm: Pin<&mut Module>) -> bool;
     }
 
@@ -78,6 +80,8 @@ pub mod wasm {
         type ModuleWriter;
 
         fn newModuleWriter() -> UniquePtr<ModuleWriter>;
+
+        fn newModuleWriterWithOptions(options: UniquePtr<PassOptions>) -> UniquePtr<ModuleWriter>;
 
         fn setDebugInfo(self: Pin<&mut Self>, debug: bool);
 
@@ -117,6 +121,8 @@ pub mod wasm {
 
         fn setFlexibleInlineMaxSize(self: Pin<&mut Self>, size: u32);
 
+        fn setMaxCombinedBinarySize(self: Pin<&mut Self>, size: u32);
+
         fn setAllowFunctionsWithLoops(self: Pin<&mut Self>, allow: bool);
 
         fn setPartialInliningIfs(self: Pin<&mut Self>, number: u32);
@@ -146,6 +152,10 @@ pub mod wasm {
         fn setZeroFilledMemory(self: Pin<&mut Self>, zeroFilledMemory: bool);
 
         fn setDebugInfo(self: Pin<&mut Self>, debugInfo: bool);
+
+        fn setGenerateStackIR(self: Pin<&mut Self>, generateStackIR: bool);
+
+        fn setOptimizeStackIR(self: Pin<&mut Self>, optimizeStackIR: bool);
 
         fn setArguments(self: Pin<&mut Self>, key: Pin<&mut CxxString>, value: Pin<&mut CxxString>);
     }
@@ -185,6 +195,12 @@ pub mod wasm {
         ) -> UniquePtr<PassRunner<'wasm>>;
 
         fn add(self: Pin<&mut Self>, pass_name: Pin<&mut CxxString>);
+
+        fn addWithArgument(
+            self: Pin<&mut Self>,
+            pass_name: Pin<&mut CxxString>,
+            pass_arg: Pin<&mut CxxString>,
+        );
 
         fn addDefaultOptimizationPasses(self: Pin<&mut Self>);
 

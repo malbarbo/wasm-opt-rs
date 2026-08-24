@@ -19,6 +19,8 @@ pub enum Pass {
     Dae,
     /// Removes arguments to calls in an lto-like manner, and optimizes where removed.
     DaeOptimizing,
+    /// Experimental reimplementation of DAE.
+    Dae2,
     /// Refine and merge abstract (never-created) types.
     AbstractTypeRefining,
     /// Reduce # of locals by coalescing.
@@ -33,10 +35,16 @@ pub enum Pass {
     ConstHoisting,
     /// Propagate constant struct field values.
     Cfp,
+    /// Propagate constant struct field values, using ref.test.
+    CfpReftest,
+    /// Finds and uses mathematical constraints on locals.
+    ConstraintAnalysis,
     /// Removes unreachable code.
     Dce,
     /// Forces all loads and stores to have alignment 1.
     Dealign,
+    /// Propagate debug location from parents or previous siblings to child nodes.
+    PropagateDebugLocs,
     /// Instrument the wasm to convert NaNs into 0 at runtime.
     DeNan,
     /// Turns indirect calls into direct ones.
@@ -53,6 +61,8 @@ pub enum Pass {
     DuplicateFunctionElimination,
     /// Emit the target features section in the output.
     EmitTargetFeatures,
+    /// Modify the wasm (destructively) for closed-world.
+    EncloseWorld,
     /// Leaves just one function (useful for debugging).
     ExtractFunction,
     /// Leaves just one function selected by index.
@@ -69,14 +79,14 @@ pub enum Pass {
     GenerateI64Dyncalls,
     /// Generate global effect info (helps later passes).
     GenerateGlobalEffects,
-    /// Generate Stack IR.
-    GenerateStackIr,
     /// Refine the types of globals.
     GlobalRefining,
-    /// Globally optimize GC types.
-    Gto,
     /// Globally optimize struct values.
     Gsi,
+    /// Globally optimize struct values, also emitting ref.cast_desc_eq.
+    GsiDescCast,
+    /// Globally optimize GC types.
+    Gto,
     /// Grand unified flow analyses.
     ///
     /// Optimize the entire program using information about what content can actually appear in each location.
@@ -85,10 +95,18 @@ pub enum Pass {
     GufaCastAll,
     /// Gufa plus local optimizations in functions we modified.
     GufaOptimizing,
+    /// Optimizes J2CL specific constructs.
+    OptimizeJ2cl,
+    /// Merges itable structures into vtables to make types more compact.
+    MergeJ2clItables,
     /// Apply more specific subtypes to type fields where possible.
     TypeRefining,
+    /// Apply more specific subtypes to type fields where possible (using GUFA).
+    TypeRefiningGufa,
     /// Replace GC allocations with locals.
     Heap2Local,
+    /// Optimize heap (GC) stores.
+    HeapStoreOptimization,
     /// Inline __original_main into main.
     InlineMain,
     /// Inline functions (you probably want inlining-optimizing).
@@ -97,12 +115,10 @@ pub enum Pass {
     InliningOptimizing,
     /// Lower away binaryen intrinsics.
     IntrinsicLowering,
-    /// Wrap imports and exports for JavaScript promise integration.
-    Jspi,
     /// Legalizes i64 types on the import/export boundary.
     LegalizeJsInterface,
-    /// Legalizes i64 types on the import/export boundary in a minimal manner, only on things only JS will call.
-    LegalizeJsInterfaceMinimally,
+    /// Legalizes the import/export boundary and prunes when needed.
+    LegalizeAndPruneJsInterface,
     /// Common subexpression elimination inside basic blocks.
     LocalCse,
     /// Apply more specific subtypes to locals where possible.
@@ -111,6 +127,10 @@ pub enum Pass {
     LogExecution,
     /// Lower all uses of i64s to use i32s instead.
     I64ToI32Lowering,
+    /// Instrument the build with code to intercept specific function calls.
+    TraceCalls,
+    /// Instrument branch hints so we can see which guessed right.
+    InstrumentBranchHints,
     /// Instrument the build with code to intercept all loads and stores.
     InstrumentLocals,
     /// Instrument the build with code to intercept all loads and stores.
@@ -119,8 +139,16 @@ pub enum Pass {
     Licm,
     /// Attempt to merge segments to fit within web limits.
     LimitSegments,
+    /// Make structs and arrays shared and functions unshared.
+    MakeSharedObjects,
+    /// Mark js called functions (using configureAll) as doing so.
+    MarkJsCalled,
     /// Lower loads and stores to a 64-bit memory to instead use a 32-bit one.
     Memory64Lowering,
+    /// Alias for memory64-lowering.
+    Table64Lowering,
+    /// Lower memory.copy and memory.fill to wasm mvp and disable the bulk-memory feature.
+    LlvmMemoryCopyFillLowering,
     /// Packs memory into separate segments, skipping zeros.
     MemoryPacking,
     /// Merges blocks to their parents.
@@ -137,10 +165,8 @@ pub enum Pass {
     MinifyImportsAndExports,
     /// Minifies both import and export names, and emits a mapping to the minified ones, and minifies the modules as well.
     MinifyImportsAndExportsAndModules,
-    /// Apply the assumption that asyncify imports always unwind, and we never rewind.
-    ModAsyncifyAlwaysAndOnlyUnwind,
-    /// Apply the assumption that asyncify never unwinds.
-    ModAsyncifyNeverUnwind,
+    /// Split types into minimal recursion groups.
+    MinimizeRecGroups,
     /// Creates specialized versions of functions.
     Monomorphize,
     /// Creates specialized versions of functions (even if unhelpful).
@@ -153,6 +179,15 @@ pub enum Pass {
     Nm,
     /// (Re)name all heap types.
     NameTypes,
+    /// Mark functions as no-inline.
+    NoInline,
+    /// Mark functions as no-inline (for full inlining only).
+    NoFullInline,
+    /// Mark functions as no-inline (for partial inlining only).
+    NoPartialInline,
+    /// Lower nontrapping float-to-int operations to wasm mvp and disable the nontrapping
+    /// fptoint feature.
+    LlvmNontrappingFptointLowering,
     /// Reduces calls to code that only runs once.
     OnceReduction,
     /// Optimizes added constants into load/store offsets.
@@ -163,8 +198,8 @@ pub enum Pass {
     OptimizeCasts,
     /// Optimizes instruction combinations.
     OptimizeInstructions,
-    /// Optimize Stack IR.
-    OptimizeStackIr,
+    /// Outline instructions.
+    Outlining,
     /// Pick load signs based on their uses.
     PickLoadSigns,
     /// Tranform Binaryen IR into Poppy IR.
@@ -185,18 +220,26 @@ pub enum Pass {
     PrintFeatures,
     /// Print in full s-expression format.
     PrintFull,
+    /// Print boundary in JSON format.
+    PrintBoundary,
     /// Print call graph.
     PrintCallGraph,
     /// Print a map of function indexes to names.
     PrintFunctionMap,
     /// (Alias for print-function-map).
     Symbolmap,
-    /// Print out Stack IR (useful for internal debugging).
-    PrintStackIr,
+    /// Propagate global values to other globals (useful for tests).
+    PropagateGlobalsGlobally,
     /// Removes operations incompatible with js.
     RemoveNonJsOps,
+    /// Replaces relaxed SIMD instructions with unreachable.
+    RemoveRelaxedSimd,
+    /// Removes exports using a wildcard.
+    RemoveExports,
     /// Removes imports and replaces them with nops.
     RemoveImports,
+    /// Removes memory initialization.
+    RemoveMemoryInit,
     /// Removes memory segments.
     RemoveMemory,
     /// Removes breaks from locations that are not needed.
@@ -217,6 +260,8 @@ pub enum Pass {
     ReorderGlobals,
     /// Sorts locals by access frequency.
     RecorderLocals,
+    /// Sorts private types by access frequency.
+    ReorderTypes,
     /// Re-optimize control flow using the relooper algorithm.
     Rereloop,
     /// Remove redundant local.sets.
@@ -227,6 +272,8 @@ pub enum Pass {
     SafeHeap,
     /// Sets specified globals to specified values.
     SetGlobals,
+    /// Write data segments to a file and strip them from the module.
+    SeparateDataSegments,
     /// Remove params from function signature types where possible.
     SignaturePruning,
     /// Apply more specific subtypes to signature types where possible.
@@ -259,6 +306,17 @@ pub enum Pass {
     Ssa,
     /// Ssa-ify variables so that they have a single assignment, ignoring merges.
     SsaNomerge,
+    /// Gathers wasm strings to globals.
+    StringGathering,
+    /// Lift string imports to wasm strings.
+    StringLifting,
+    /// Lowers wasm strings and operations to imports.
+    StringLowering,
+    /// Same as string-lowering, but encodes well-formed strings as magic imports.
+    StringLoweringMagicImports,
+    /// Same as string-lowering-magic-imports, but raise a fatal error if there are invalid
+    /// strings.
+    StringLoweringMagicImportsAssert,
     /// Deprecated; same as strip-debug.
     Strip,
     /// Enforce limits on llvm's __stack_pointer global.
@@ -273,14 +331,28 @@ pub enum Pass {
     StripEh,
     /// Strip the wasm target features section.
     StripTargetFeatuers,
+    /// Strip all toolchain-specific code annotations.
+    StripToolchainAnnotations,
+    /// Deprecated; same as translate-to-exnref.
+    TranslateToNewEh,
+    /// Translate old Phase 3 EH instructions to new ones with exnref.
+    TranslateToExnref,
     /// Replace trapping operations with clamping semantics.
     TrapModeClamp,
     /// Replace trapping operations with js semantics.
     TrapModeJs,
+    /// Optimize trivial tuples away.
+    TupleOptimization,
+    /// Mark all leaf types as final.
+    TypeFinalizing,
     /// Merge types to their supertypes where possible.
     TypeMerging,
     /// Create new nominal types to help other optimizations.
     TypeSsa,
+    /// Mark all types as non-final (open).
+    TypeUnfinalizing,
+    /// Removes unnecessary subtyping relationships.
+    Unsubtyping,
     /// Removes local.tees, replacing them with sets and gets.
     Untee,
     /// Removes obviously unneeded code.
@@ -299,6 +371,7 @@ impl Pass {
             AvoidReinterprets => "avoid-reinterprets",
             Dae => "dae",
             DaeOptimizing => "dae-optimizing",
+            Dae2 => "dae2",
             AbstractTypeRefining => "abstract-type-refining",
             CoalesceLocals => "coalesce-locals",
             CoalesceLocalsLearning => "coalesce-locals-learning",
@@ -306,16 +379,20 @@ impl Pass {
             CodeFolding => "code-folding",
             ConstHoisting => "const-hoisting",
             Cfp => "cfp",
+            CfpReftest => "cfp-reftest",
+            ConstraintAnalysis => "constraint-analysis",
             Dce => "dce",
             Dealign => "dealign",
+            PropagateDebugLocs => "propagate-debug-locs",
             DeNan => "denan",
-            DiscardGlobalEffects => "discard-global-effects",
             Directize => "directize",
+            DiscardGlobalEffects => "discard-global-effects",
             Dfo => "dfo",
             DwarfDump => "dwarfdump",
             DuplicateImportElimination => "duplicate-import-elimination",
             DuplicateFunctionElimination => "duplicate-function-elimination",
             EmitTargetFeatures => "emit-target-features",
+            EncloseWorld => "enclose-world",
             ExtractFunction => "extract-function",
             ExtractFunctionIndex => "extract-function-index",
             Flatten => "flatten",
@@ -324,31 +401,40 @@ impl Pass {
             GenerateDyncalls => "generate-dyncalls",
             GenerateI64Dyncalls => "generate-i64-dyncalls",
             GenerateGlobalEffects => "generate-global-effects",
-            GenerateStackIr => "generate-stack-ir",
             GlobalRefining => "global-refining",
-            Gto => "gto",
             Gsi => "gsi",
+            GsiDescCast => "gsi-desc-cast",
+            Gto => "gto",
             Gufa => "gufa",
             GufaCastAll => "gufa-cast-all",
             GufaOptimizing => "gufa-optimizing",
+            OptimizeJ2cl => "optimize-j2cl",
+            MergeJ2clItables => "merge-j2cl-itables",
             TypeRefining => "type-refining",
+            TypeRefiningGufa => "type-refining-gufa",
             Heap2Local => "heap2local",
+            HeapStoreOptimization => "heap-store-optimization",
             InlineMain => "inline-main",
             Inlining => "inlining",
             InliningOptimizing => "inlining-optimizing",
             IntrinsicLowering => "intrinsic-lowering",
-            Jspi => "jspi",
             LegalizeJsInterface => "legalize-js-interface",
-            LegalizeJsInterfaceMinimally => "legalize-js-interface-minimally",
+            LegalizeAndPruneJsInterface => "legalize-and-prune-js-interface",
             LocalCse => "local-cse",
             LocalSubtyping => "local-subtyping",
             LogExecution => "log-execution",
             I64ToI32Lowering => "i64-to-i32-lowering",
+            TraceCalls => "trace-calls",
+            InstrumentBranchHints => "instrument-branch-hints",
             InstrumentLocals => "instrument-locals",
             InstrumentMemory => "instrument-memory",
             Licm => "licm",
             LimitSegments => "limit-segments",
+            MakeSharedObjects => "make-shared-objects",
+            MarkJsCalled => "mark-js-called",
             Memory64Lowering => "memory64-lowering",
+            Table64Lowering => "table64-lowering",
+            LlvmMemoryCopyFillLowering => "llvm-memory-copy-fill-lowering",
             MemoryPacking => "memory-packing",
             MergeBlocks => "merge-blocks",
             MergeSimilarFunctions => "merge-similar-functions",
@@ -357,20 +443,23 @@ impl Pass {
             MinifyImports => "minify-imports",
             MinifyImportsAndExports => "minify-imports-and-exports",
             MinifyImportsAndExportsAndModules => "minify-imports-and-exports-and-modules",
-            ModAsyncifyAlwaysAndOnlyUnwind => "mod-asyncify-always-and-only-unwind",
-            ModAsyncifyNeverUnwind => "mod-asyncify-never-unwind",
+            MinimizeRecGroups => "minimize-rec-groups",
             Monomorphize => "monomorphize",
             MonomorphizeAlways => "monomorphize-always",
             MultiMemoryLowering => "multi-memory-lowering",
             MultiMemoryLoweringWithBoundsChecks => "multi-memory-lowering-with-bounds-checks",
             Nm => "nm",
             NameTypes => "name-types",
+            NoInline => "no-inline",
+            NoFullInline => "no-full-inline",
+            NoPartialInline => "no-partial-inline",
+            LlvmNontrappingFptointLowering => "llvm-nontrapping-fptoint-lowering",
             OnceReduction => "once-reduction",
             OptimizeAddedConstants => "optimize-added-constants",
             OptimizeAddedConstantsPropagate => "optimize-added-constants-propagate",
             OptimizeCasts => "optimize-casts",
             OptimizeInstructions => "optimize-instructions",
-            OptimizeStackIr => "optimize-stack-ir",
+            Outlining => "outlining",
             PickLoadSigns => "pick-load-signs",
             Poppify => "poppify",
             PostEmscripten => "post-emscripten",
@@ -381,12 +470,16 @@ impl Pass {
             PrintMinified => "print-minified",
             PrintFeatures => "print-features",
             PrintFull => "print-full",
+            PrintBoundary => "print-boundary",
             PrintCallGraph => "print-call-graph",
             PrintFunctionMap => "print-function-map",
             Symbolmap => "symbolmap",
-            PrintStackIr => "print-stack-ir",
+            PropagateGlobalsGlobally => "propagate-globals-globally",
             RemoveNonJsOps => "remove-non-js-ops",
+            RemoveRelaxedSimd => "remove-relaxed-simd",
+            RemoveExports => "remove-exports",
             RemoveImports => "remove-imports",
+            RemoveMemoryInit => "remove-memory-init",
             RemoveMemory => "remove-memory",
             RemoveUnusedBrs => "remove-unused-brs",
             RemoveUnusedModuleElements => "remove-unused-module-elements",
@@ -397,11 +490,13 @@ impl Pass {
             ReorderFunctions => "reorder-functions",
             ReorderGlobals => "reorder-globals",
             RecorderLocals => "reorder-locals",
+            ReorderTypes => "reorder-types",
             Rereloop => "rereloop",
             Rse => "rse",
             Roundtrip => "roundtrip",
             SafeHeap => "safe-heap",
             SetGlobals => "set-globals",
+            SeparateDataSegments => "separate-data-segments",
             SignaturePruning => "signature-pruning",
             SignatureRefining => "signature-refining",
             SignextLowering => "signext-lowering",
@@ -418,6 +513,11 @@ impl Pass {
             StubUnsupportedJs => "stub-unsupported-js",
             Ssa => "ssa",
             SsaNomerge => "ssa-nomerge",
+            StringGathering => "string-gathering",
+            StringLifting => "string-lifting",
+            StringLowering => "string-lowering",
+            StringLoweringMagicImports => "string-lowering-magic-imports",
+            StringLoweringMagicImportsAssert => "string-lowering-magic-imports-assert",
             Strip => "strip",
             StackCheck => "stack-check",
             StripDebug => "strip-debug",
@@ -425,10 +525,17 @@ impl Pass {
             StripProducers => "strip-producers",
             StripEh => "strip-eh",
             StripTargetFeatuers => "strip-target-features",
+            StripToolchainAnnotations => "strip-toolchain-annotations",
+            TranslateToNewEh => "translate-to-new-eh",
+            TranslateToExnref => "translate-to-exnref",
             TrapModeClamp => "trap-mode-clamp",
             TrapModeJs => "trap-mode-js",
+            TupleOptimization => "tuple-optimization",
+            TypeFinalizing => "type-finalizing",
             TypeMerging => "type-merging",
             TypeSsa => "type-ssa",
+            TypeUnfinalizing => "type-unfinalizing",
+            Unsubtyping => "unsubtyping",
             Untee => "untee",
             Vacuum => "vacuum",
         }

@@ -23,9 +23,13 @@ rm -rf ./components/wasm-opt-sys/binaryen
 
 cp -r ./binaryen ./components/wasm-opt-sys/
 
-# Make sure we don't publish this recursive submodule.
+# Make sure we don't publish these recursive submodules.
 # Not needed by our build.
+rm -rf ./components/wasm-opt-sys/binaryen/third_party/fuzztest
 rm -rf ./components/wasm-opt-sys/binaryen/third_party/googletest
+rm -rf ./components/wasm-opt-sys/binaryen/third_party/mimalloc
+rm -rf ./components/wasm-opt-sys/binaryen/third_party/picosha2
+rm -rf ./components/wasm-opt-sys/binaryen/third_party/simde
 
 # Don't publish the large Binaryen test suite.
 rm -r ./components/wasm-opt-sys/binaryen/test

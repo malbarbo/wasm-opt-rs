@@ -85,8 +85,59 @@ pub enum Feature {
     /// Multiple memory.
     ///
     /// [Specification](https://github.com/WebAssembly/multi-memory/blob/master/proposals/multi-memory/Overview.md).
-    #[strum(serialize = "multi-memory")]
+    #[strum(serialize = "multimemory")]
     MultiMemory,
+    /// Stack switching.
+    ///
+    /// [Specification](https://github.com/WebAssembly/stack-switching/blob/main/proposals/stack-switching/Overview.md).
+    #[strum(serialize = "stack-switching")]
+    StackSwitching,
+    /// Shared-everything threads.
+    ///
+    /// [Specification](https://github.com/WebAssembly/shared-everything-threads/blob/main/proposals/shared-everything-threads/Overview.md).
+    #[strum(serialize = "shared-everything")]
+    SharedEverything,
+    /// Float 16 operations.
+    ///
+    /// [Specification](https://github.com/WebAssembly/half-precision/blob/main/proposals/half-precision/Overview.md).
+    #[strum(serialize = "fp16")]
+    Fp16,
+    /// Just the `memory.copy` and `memory.fill` operations.
+    #[strum(serialize = "bulk-memory-opt")]
+    BulkMemoryOpt,
+    /// LEB encoding of `call_indirect`.
+    ///
+    /// This is a no-op for compatibility: Binaryen always accepts overlong
+    /// LEB `call_indirect` encodings.
+    #[strum(serialize = "call-indirect-overlong")]
+    CallIndirectOverlong,
+    /// Custom descriptors (RTTs) and exact references.
+    ///
+    /// [Specification](https://github.com/WebAssembly/custom-descriptors/blob/main/proposals/custom-descriptors/Overview.md).
+    #[strum(serialize = "custom-descriptors")]
+    CustomDescriptors,
+    /// Acquire/release atomic memory operations.
+    #[strum(serialize = "acquire-release-atomics")]
+    AcquireReleaseAtomics,
+    /// Custom page sizes.
+    ///
+    /// [Specification](https://github.com/WebAssembly/custom-page-sizes/blob/main/proposals/custom-page-sizes/Overview.md).
+    #[strum(serialize = "custom-page-sizes")]
+    CustomPageSizes,
+    /// Multibyte array loads and stores.
+    #[strum(serialize = "multibyte")]
+    Multibyte,
+    /// Wide arithmetic.
+    ///
+    /// [Specification](https://github.com/WebAssembly/wide-arithmetic/blob/main/proposals/wide-arithmetic/Overview.md).
+    #[strum(serialize = "wide-arithmetic")]
+    WideArithmetic,
+    /// Compact import section.
+    #[strum(serialize = "compact-imports")]
+    CompactImports,
+    /// Relaxed atomic memory operations.
+    #[strum(serialize = "relaxed-atomics")]
+    RelaxedAtomics,
     /// The original WebAssembly specification.
     ///
     /// It has the same value as `None`.

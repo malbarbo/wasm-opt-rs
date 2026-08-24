@@ -41,6 +41,12 @@ pub struct ReaderOptions {
     /// the module is in binary or text format,
     /// then read as appropriate.
     pub file_type: FileType,
+    /// Preserve the order of types from the input module.
+    ///
+    /// This corresponds to the `--preserve-type-order` argument to `wasm-opt`.
+    ///
+    /// Default: `false`.
+    pub preserve_type_order: bool,
 }
 
 /// Options for writing the optimized wasm module.
@@ -86,6 +92,10 @@ pub struct InliningOptions {
     ///
     /// Default: `20`.
     pub flexible_inline_max_size: u32,
+    /// The limit for the combined size of the code after inlining.
+    ///
+    /// Default: `400 * 1024`.
+    pub max_combined_binary_size: u32,
     /// Functions with loops are usually not inlined.
     ///
     /// Default: `false`.
@@ -138,6 +148,16 @@ pub struct PassOptions {
     ///
     /// Default: `false`.
     pub debug_info: bool,
+    /// Allow the use of StackIR while writing the module.
+    ///
+    /// StackIR is generated and optimized when it is allowed and
+    /// [`PassOptions::optimize_level`] is at least [`OptimizeLevel::Level2`],
+    /// or [`PassOptions::shrink_level`] is at least [`ShrinkLevel::Level1`].
+    ///
+    /// This corresponds to the inverse of the `--no-stack-ir` argument to `wasm-opt`.
+    ///
+    /// Default: `true`.
+    pub allow_stack_ir: bool,
     /// Additional pass-specific arguments.
     pub arguments: HashMap<String, String>,
 }
@@ -327,6 +347,7 @@ impl Default for ReaderOptions {
     fn default() -> ReaderOptions {
         ReaderOptions {
             file_type: FileType::Any,
+            preserve_type_order: false,
         }
     }
 }
@@ -345,6 +366,7 @@ impl Default for InliningOptions {
             always_inline_max_size: 2,
             one_caller_inline_max_size: u32::MAX,
             flexible_inline_max_size: 20,
+            max_combined_binary_size: 400 * 1024,
             allow_functions_with_loops: false,
             partial_inlining_ifs: 0,
         }
@@ -363,6 +385,7 @@ impl Default for PassOptions {
             fast_math: false,
             zero_filled_memory: false,
             debug_info: false,
+            allow_stack_ir: true,
             arguments: HashMap::<String, String>::new(),
         }
     }

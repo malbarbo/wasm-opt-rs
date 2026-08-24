@@ -10,6 +10,12 @@ impl OptimizationOptions {
         self
     }
 
+    /// Sets [`ReaderOptions::preserve_type_order`].
+    pub fn preserve_type_order(&mut self, value: bool) -> &mut Self {
+        self.reader.preserve_type_order = value;
+        self
+    }
+
     /// Sets [`WriterOptions::file_type`].
     pub fn writer_file_type(&mut self, value: FileType) -> &mut Self {
         self.writer.file_type = value;
@@ -37,6 +43,12 @@ impl OptimizationOptions {
     /// Sets [`InliningOptions::flexible_inline_max_size`].
     pub fn flexible_inline_max_size(&mut self, value: u32) -> &mut Self {
         self.inlining.flexible_inline_max_size = value;
+        self
+    }
+
+    /// Sets [`InliningOptions::max_combined_binary_size`].
+    pub fn max_combined_binary_size(&mut self, value: u32) -> &mut Self {
+        self.inlining.max_combined_binary_size = value;
         self
     }
 
@@ -103,6 +115,12 @@ impl OptimizationOptions {
     /// Sets [`PassOptions::debug_info`].
     pub fn debug_info(&mut self, value: bool) -> &mut Self {
         self.passopts.debug_info = value;
+        self
+    }
+
+    /// Sets [`PassOptions::allow_stack_ir`].
+    pub fn allow_stack_ir(&mut self, value: bool) -> &mut Self {
+        self.passopts.allow_stack_ir = value;
         self
     }
 
