@@ -415,6 +415,40 @@ pub fn validate_wasm(wasm: &mut Module) -> bool {
     wasm::validateWasm(wasm.0.pin_mut())
 }
 
+/// Whether the module is in a shape that ctor evaluation can handle.
+///
+/// This flattens the module's memory, so it modifies the module even when it
+/// returns false.
+pub fn ctor_eval_can_eval(wasm: &mut Module) -> bool {
+    wasm::ctorEvalCanEval(wasm.0.pin_mut())
+}
+
+/// Evaluates `ctors`, in order, until one of them cannot be evaluated.
+///
+/// `ctors` and `kept_exports` are comma-separated lists of export names.
+///
+/// Returns false if evalling ran into something it could not handle and left
+/// the module in a state that cannot be written out. The caller must then
+/// discard the module and start over from the input.
+pub fn ctor_eval_run(
+    wasm: &mut Module,
+    ctors: &str,
+    kept_exports: &str,
+    ignore_external_input: bool,
+    quiet: bool,
+) -> Result<bool, cxx::Exception> {
+    let_cxx_string!(ctors = ctors);
+    let_cxx_string!(kept_exports = kept_exports);
+
+    wasm::ctorEvalRun(
+        wasm.0.pin_mut(),
+        ctors,
+        kept_exports,
+        ignore_external_input,
+        quiet,
+    )
+}
+
 pub fn check_inlining_options_defaults(inlining_options: InliningOptions) -> bool {
     wasm::checkInliningOptionsDefaults(inlining_options.0)
 }

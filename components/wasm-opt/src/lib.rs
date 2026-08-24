@@ -111,6 +111,35 @@
 //! for debug purposes or print directly to the console.
 //!
 //!
+//! ## Evaluating global constructors
+//!
+//! Binaryen's other tool for optimizing a module, `wasm-ctor-eval`, executes
+//! exported functions at compile time and applies their effects to the module,
+//! so that they do not have to run at startup. It is exposed by the
+//! [`CtorEvalOptions`] type, which follows the same builder pattern.
+//!
+//! ```no_run
+//! use wasm_opt::CtorEvalOptions;
+//!
+//! let infile = "hello_world.wasm";
+//! let outfile = "hello_world_evalled.wasm";
+//!
+//! CtorEvalOptions::new()
+//!     .add_ctor("start")
+//!     .run(infile, outfile)?;
+//!
+//! # Ok::<(), anyhow::Error>(())
+//! ```
+//!
+//! Evaluation proceeds through the ctors in order and stops at the first one
+//! it cannot evaluate, which is not an error &mdash; the module is written out
+//! with whatever was evalled before it. Set [`CtorEvalOptions::quiet`] to
+//! `false` to have the reason logged to stdout, as the command line tool does.
+//!
+//! Unlike `wasm-opt`, the `wasm-ctor-eval` command line tool is not installed
+//! by this crate.
+//!
+//!
 //! ## Integrating with existing tooling
 //!
 //! For ease of integration with tools that already use `wasm-opt` via CLI, this
@@ -134,6 +163,9 @@ pub use api::*;
 
 // Returned by the `run` method.
 pub use run::OptimizationError;
+
+// The `wasm-ctor-eval` API.
+pub use ctor_eval::{CtorEvalError, CtorEvalOptions};
 
 // Easy integration with tools that already use `wasm-opt` via CLI.
 pub mod integration;
@@ -166,6 +198,10 @@ mod features;
 // The `run` method that re-implements the logic from `wasm-opt.cpp`
 // on top of `OptimizationOptions`.
 mod run;
+
+// `CtorEvalOptions` and the `run` method that re-implements the logic
+// from `wasm-ctor-eval.cpp` on top of it.
+mod ctor_eval;
 
 // A thin wrapper around `std::process::Command` that provides the unstable
 // `get_args` method.

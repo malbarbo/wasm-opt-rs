@@ -25,6 +25,10 @@
   unless this is set.
 - A pass argument named after a pass, e.g. `--pass-arg extract-function@NAME`,
   is now attached to that pass instance, as Binaryen requires.
+- Added `CtorEvalOptions`, an API for Binaryen's `wasm-ctor-eval` tool, which
+  executes exported functions at compile time and applies their effects to the
+  module. It supports the same options as the command line tool, which is not
+  itself installed by this crate.
 
 ## 0.116.1
 

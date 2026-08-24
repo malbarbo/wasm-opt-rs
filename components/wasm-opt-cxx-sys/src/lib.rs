@@ -44,6 +44,16 @@ pub mod wasm {
         fn clearTypeIndices(wasm: Pin<&mut Module>);
 
         fn validateWasm(wasm: Pin<&mut Module>) -> bool;
+
+        fn ctorEvalCanEval(wasm: Pin<&mut Module>) -> bool;
+
+        fn ctorEvalRun(
+            wasm: Pin<&mut Module>,
+            ctors: Pin<&mut CxxString>,
+            keptExports: Pin<&mut CxxString>,
+            ignoreExternalInput: bool,
+            quiet: bool,
+        ) -> Result<bool>;
     }
 
     unsafe extern "C++" {

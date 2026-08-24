@@ -1,6 +1,7 @@
-//! A builder API for `OptimizationOptions`.
+//! A builder API for `OptimizationOptions` and `CtorEvalOptions`.
 
 use crate::api::*;
+use crate::ctor_eval::CtorEvalOptions;
 
 /// Builder methods.
 impl OptimizationOptions {
@@ -141,6 +142,90 @@ impl OptimizationOptions {
     /// Adds a pass to [`Passes::more_passes`].
     pub fn add_pass(&mut self, value: Pass) -> &mut Self {
         self.passes.more_passes.push(value);
+        self
+    }
+
+    /// Sets the baseline feature set to [`FeatureBaseline::MvpOnly`].
+    pub fn mvp_features_only(&mut self) -> &mut Self {
+        self.features.baseline = FeatureBaseline::MvpOnly;
+        self
+    }
+
+    /// Sets the baseline feature set to [`FeatureBaseline::All`].
+    pub fn all_features(&mut self) -> &mut Self {
+        self.features.baseline = FeatureBaseline::All;
+        self
+    }
+
+    /// Enables a feature.
+    ///
+    /// This adds the feature to [`Features::enabled`], and is equivalent to the
+    /// `--enable-{feature}` command line arguments.
+    pub fn enable_feature(&mut self, feature: Feature) -> &mut Self {
+        self.features.enabled.insert(feature);
+        self
+    }
+
+    /// Disables a feature.
+    ///
+    /// This adds the feature to [`Features::disabled`], and is equivalent to
+    /// the `--disable-{feature}` command line arguments.
+    pub fn disable_feature(&mut self, feature: Feature) -> &mut Self {
+        self.features.disabled.insert(feature);
+        self
+    }
+}
+
+/// Builder methods.
+impl CtorEvalOptions {
+    /// Sets [`ReaderOptions::file_type`].
+    pub fn reader_file_type(&mut self, value: FileType) -> &mut Self {
+        self.reader.file_type = value;
+        self
+    }
+
+    /// Sets [`ReaderOptions::preserve_type_order`].
+    pub fn preserve_type_order(&mut self, value: bool) -> &mut Self {
+        self.reader.preserve_type_order = value;
+        self
+    }
+
+    /// Sets [`WriterOptions::file_type`].
+    pub fn writer_file_type(&mut self, value: FileType) -> &mut Self {
+        self.writer.file_type = value;
+        self
+    }
+
+    /// Adds an exported function to [`CtorEvalOptions::ctors`].
+    pub fn add_ctor(&mut self, value: impl Into<String>) -> &mut Self {
+        self.ctors.push(value.into());
+        self
+    }
+
+    /// Adds an exported function to [`CtorEvalOptions::kept_exports`].
+    ///
+    /// It should also be added with [`CtorEvalOptions::add_ctor`];
+    /// keeping the export of a ctor that is not evaluated does nothing.
+    pub fn add_kept_export(&mut self, value: impl Into<String>) -> &mut Self {
+        self.kept_exports.push(value.into());
+        self
+    }
+
+    /// Sets [`CtorEvalOptions::ignore_external_input`].
+    pub fn ignore_external_input(&mut self, value: bool) -> &mut Self {
+        self.ignore_external_input = value;
+        self
+    }
+
+    /// Sets [`CtorEvalOptions::debug_info`].
+    pub fn debug_info(&mut self, value: bool) -> &mut Self {
+        self.debug_info = value;
+        self
+    }
+
+    /// Sets [`CtorEvalOptions::quiet`].
+    pub fn quiet(&mut self, value: bool) -> &mut Self {
+        self.quiet = value;
         self
     }
 

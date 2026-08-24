@@ -31,6 +31,9 @@ fn main() -> anyhow::Result<()> {
     let wasm_opt_src = tools_dir.join("wasm-opt.cpp");
     let wasm_opt_src = get_converted_wasm_opt_cpp(&wasm_opt_src)?;
 
+    let wasm_ctor_eval_src = tools_dir.join("wasm-ctor-eval.cpp");
+    let wasm_ctor_eval_src = get_converted_wasm_ctor_eval_cpp(&wasm_ctor_eval_src)?;
+
     let wasm_intrinsics_src = get_converted_wasm_intrinsics_cpp(&src_dir)?;
 
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")?;
@@ -82,6 +85,7 @@ fn main() -> anyhow::Result<()> {
         .file(wasm_opt_main_shim)
         .files(src_files)
         .file(wasm_opt_src)
+        .file(wasm_ctor_eval_src)
         .file(wasm_intrinsics_src);
 
     builder.files(&llvm_files);
@@ -147,6 +151,89 @@ fn get_converted_wasm_opt_cpp(src_dir: &Path) -> anyhow::Result<PathBuf> {
 
     Ok(output_wasm_opt_file)
 }
+
+/// Renames `main` and appends a bridge that the bindings can link against.
+///
+/// Everything `wasm-ctor-eval.cpp` does interesting lives in an anonymous
+/// namespace, and so has internal linkage. Code appended to the same
+/// translation unit can still see those names though, so instead of patching
+/// the namespace we add a few functions with external linkage at the end.
+fn get_converted_wasm_ctor_eval_cpp(src_dir: &Path) -> anyhow::Result<PathBuf> {
+    let wasm_ctor_eval_file = File::open(src_dir)?;
+    let reader = BufReader::new(wasm_ctor_eval_file);
+
+    let output_dir = std::env::var("OUT_DIR")?;
+    let output_dir = Path::new(&output_dir);
+
+    let temp_file_dir = output_dir.join("wasm_ctor_eval.cpp.temp");
+    let temp_file = File::create(&temp_file_dir)?;
+
+    let mut writer = BufWriter::new(temp_file);
+    for line in reader.lines() {
+        let mut line = line?;
+
+        // The bindings do not call it, but leaving it out of the way keeps it
+        // from clashing with Rust's `main`.
+        if line.contains("int main") {
+            line = line.replace("int main", "extern \"C\" int wasm_ctor_eval_main_actual");
+        }
+
+        writer.write_all(line.as_bytes())?;
+        writer.write_all(b"\n")?;
+    }
+
+    writer.write_all(WASM_CTOR_EVAL_BRIDGE.as_bytes())?;
+    writer.flush()?;
+    drop(writer);
+
+    let output_wasm_ctor_eval_file = output_dir.join("wasm-ctor-eval.cpp");
+    fs::rename(&temp_file_dir, &output_wasm_ctor_eval_file)?;
+
+    Ok(output_wasm_ctor_eval_file)
+}
+
+/// The bridge appended to `wasm-ctor-eval.cpp`.
+///
+/// It is declared by `wasm-opt-cxx-sys`'s `shims.h`.
+const WASM_CTOR_EVAL_BRIDGE: &str = r#"
+//
+// Appended by wasm-opt-sys's build script.
+//
+
+namespace wasm_opt_rs {
+
+bool ctorEvalCanEval(wasm::Module& wasm) { return canEval(wasm); }
+
+bool ctorEvalRun(wasm::Module& wasm,
+                 const std::string& ctors,
+                 const std::string& keptExports,
+                 bool ignoreExternalInputArg,
+                 bool quietArg) {
+  // These are statics of this translation unit, and `main` only ever sets
+  // them. Assign all of them so that a call cannot observe the state left
+  // behind by a previous one.
+  ignoreExternalInput = ignoreExternalInputArg;
+  quiet = quietArg;
+  invalidState = false;
+
+  // `wasm-ctor-eval` splits these the same way, so that a name containing a
+  // comma inside brackets is not split.
+  wasm::String::Split ctorList, keptExportList;
+  if (!ctors.empty()) {
+    ctorList = wasm::String::Split(ctors, ",");
+  }
+  if (!keptExports.empty()) {
+    keptExportList = wasm::String::Split(keptExports, ",");
+  }
+
+  evalCtors(wasm, ctorList, keptExportList);
+
+  // Evalling can leave the module in a state that cannot be written out.
+  return !invalidState;
+}
+
+} // namespace wasm_opt_rs
+"#;
 
 fn get_src_files(src_dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
     let analysis_dir = src_dir.join("analysis");

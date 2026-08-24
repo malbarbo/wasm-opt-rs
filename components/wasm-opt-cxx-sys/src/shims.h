@@ -31,6 +31,19 @@ namespace rust::behavior {
   }
 }
 
+// Implemented by the bridge that `wasm-opt-sys`'s build script appends to
+// binaryen's `src/tools/wasm-ctor-eval.cpp`. The ctor evaluation itself is in
+// an anonymous namespace there, so it can only be reached that way.
+namespace wasm_opt_rs {
+  bool ctorEvalCanEval(wasm::Module& wasm);
+
+  bool ctorEvalRun(wasm::Module& wasm,
+                   const std::string& ctors,
+                   const std::string& keptExports,
+                   bool ignoreExternalInput,
+                   bool quiet);
+}
+
 namespace wasm_shims {
   typedef wasm::Module Module;
 
@@ -48,6 +61,21 @@ namespace wasm_shims {
     wasm::WasmValidator v;
 
     return v.validate(wasm);
+  }
+
+  bool ctorEvalCanEval(wasm::Module& wasm) {
+    return wasm_opt_rs::ctorEvalCanEval(wasm);
+  }
+
+  // Returns false if evalling left the module in a state that cannot be
+  // written out, in which case the caller must discard it.
+  bool ctorEvalRun(wasm::Module& wasm,
+                   std::string& ctors,
+                   std::string& keptExports,
+                   bool ignoreExternalInput,
+                   bool quiet) {
+    return wasm_opt_rs::ctorEvalRun(
+      wasm, ctors, keptExports, ignoreExternalInput, quiet);
   }
 }
 

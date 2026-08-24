@@ -281,7 +281,7 @@ fn will_remove_debug_info(passes: &[Pass]) -> bool {
         .any(|pass| PassRunner::pass_removes_debug_info(pass.name()) == true)
 }
 
-fn convert_feature_sets(features: &Features) -> (BaseFeatureSet, BaseFeatureSet) {
+pub(crate) fn convert_feature_sets(features: &Features) -> (BaseFeatureSet, BaseFeatureSet) {
     let mut feature_set_enabled = BaseFeatureSet::new();
     let mut feature_set_disabled = BaseFeatureSet::new();
 
