@@ -29,6 +29,11 @@
   executes exported functions at compile time and applies their effects to the
   module. It supports the same options as the command line tool, which is not
   itself installed by this crate.
+- Fixed an abort when optimizing any module containing an exception. The C++ is
+  now built with `-fno-rtti` and `-fno-omit-frame-pointer`, which is how
+  Binaryen's own CMake builds it: at `-O3` with RTTI, gcc 14 leaves the
+  `NonconstantException` that `Precompute` raises and catches with no handler,
+  and the process aborts.
 
 ## 0.116.1
 

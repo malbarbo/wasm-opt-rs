@@ -60,6 +60,17 @@ fn main() -> anyhow::Result<()> {
                 "-std=c++20",
                 "-w",
                 "-Wno-unused-parameter",
+                // Binaryen's own CMakeLists sets these two for every non-MSVC
+                // build, and this one has to match it: at `-O3` with RTTI on,
+                // gcc 14 miscompiles `Precompute`, and the `NonconstantException`
+                // that `visitThrow` raises finds no handler at all -- the
+                // process aborts on any module with an exception in it. `-O2`
+                // with RTTI, or `-O3` without, are both fine, which is what
+                // makes it the compiler's bug and not binaryen's; matching the
+                // flags binaryen is built and tested with is the fix that is
+                // not a guess. See `tests/exceptions.wat`.
+                "-fno-rtti",
+                "-fno-omit-frame-pointer",
                 "-DTHROW_ON_FATAL",
                 #[cfg(feature = "dwarf")]
                 "-DBUILD_LLVM_DWARF",

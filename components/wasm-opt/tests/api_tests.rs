@@ -119,3 +119,25 @@ fn optimization_read_module_error_works() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+/// `-O3` over a module with a `throw` in it.
+///
+/// `Precompute` interprets what it can and catches the `NonconstantException`
+/// the interpreter raises at a `throw`. Compiled at `-O3` with RTTI -- which is
+/// what `cc` does by default and what binaryen's own build does not -- gcc
+/// leaves that exception with no handler, and this aborts the process rather
+/// than failing. See `wasm-opt-sys`'s build script.
+#[test]
+fn optimizing_a_module_with_an_exception_works() -> anyhow::Result<()> {
+    let temp_dir = Builder::new().prefix("wasm_opt_api_tests").tempdir()?;
+    let outfile = temp_dir.path().join("outfile.wasm");
+
+    OptimizationOptions::new_opt_level_3()
+        .all_features()
+        .reader_file_type(FileType::Wat)
+        .run("tests/exceptions.wat", &outfile)?;
+
+    assert!(outfile.exists());
+
+    Ok(())
+}
