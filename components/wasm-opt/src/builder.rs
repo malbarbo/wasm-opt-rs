@@ -229,6 +229,12 @@ impl CtorEvalOptions {
         self
     }
 
+    /// Sets [`CtorEvalOptions::max_steps`].
+    pub fn max_steps(&mut self, value: u32) -> &mut Self {
+        self.max_steps = value;
+        self
+    }
+
     /// Sets the baseline feature set to [`FeatureBaseline::MvpOnly`].
     pub fn mvp_features_only(&mut self) -> &mut Self {
         self.features.baseline = FeatureBaseline::MvpOnly;

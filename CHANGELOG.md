@@ -34,6 +34,22 @@
   Binaryen's own CMake builds it: at `-O3` with RTTI, gcc 14 leaves the
   `NonconstantException` that `Precompute` raises and catches with no handler,
   and the process aborts.
+- **Building now requires `patch`.** `components/wasm-opt-sys/patches/` holds
+  changes to Binaryen that are not upstream, and the build script applies them
+  to copies of the sources under `OUT_DIR`. The submodule stays pointed at
+  upstream and is never written to.
+- Ctor evaluation no longer gives up on a module whose memory cannot be
+  flattened. Binaryen refuses to flatten a module with a passive data segment,
+  or one where an expression names a segment -- `array.new_data`, which is how
+  a GC language materialises a constant array -- so for those it used to
+  evaluate nothing at all. Now only a ctor that *writes* linear memory fails,
+  and the rest are evaluated. A module holding a `data.drop` is still refused:
+  that effect never reaches the external interface, so it cannot be caught one
+  ctor at a time.
+- Added `CtorEvalOptions::max_steps`, which bounds the instructions an
+  evaluation may execute. Binaryen's evaluator cannot time out, so without this
+  a ctor that does not terminate does not either. Running over it fails that
+  ctor, the way reading an import does.
 
 ## 0.116.1
 

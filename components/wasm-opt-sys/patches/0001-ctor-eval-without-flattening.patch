@@ -1,0 +1,103 @@
+Eval ctors in a module whose memory cannot be flattened.
+
+`wasm-ctor-eval` gives up on the whole module unless `MemoryUtils::flatten`
+succeeds, and its own comment calls that a TODO. Flattening fails on a passive
+data segment, and on any expression that *names* a segment -- `array.new_data`
+is one, and it is how a GC language materialises a constant array or a string
+literal. So for a WasmGC program the tool evaluates nothing at all, however
+little the ctors touch linear memory.
+
+Flattening buys exactly one thing, and it is not interpretation. Reading memory
+does not need it: the interpreter seeds each active segment at its own constant
+offset, and the external interface's memory is a vector grown from address
+zero. `array.new_data` does not need it either; it reads its segment directly,
+and unflattened the segment's identity is still intact. What needs it is
+`applyMemoryToModule`, which dumps the final image into `dataSegments[0]` and
+asserts that its offset is zero.
+
+So: remember whether flattening succeeded, and if it did not, refuse the writes
+instead of the module. A store after instantiation throws `FailToEvalException`,
+which fails that one ctor and lets the others run; and the memory is not written
+back, there being nothing in it that execution put there.
+
+`data.drop` is the exception. It is the one memory effect that never reaches the
+external interface -- the interpreter records it in a set of its own -- so it
+cannot be caught one ctor at a time, and a module containing one is still given
+up on.
+
+--- a/src/tools/wasm-ctor-eval.cpp
++++ b/src/tools/wasm-ctor-eval.cpp
+@@ -301,6 +301,11 @@
+ // Whether to emit informative logging to stdout about the eval process.
+ static bool quiet = false;
+ 
++// Whether linear memory was flattened into the one segment at offset 0 that
++// applyMemoryToModule() writes an evalled memory image back into. Set by
++// canEval(), which is where the reasoning is.
++static bool flattenedMemory = true;
++
+ struct CtorEvalExternalInterface : EvallingModuleRunner::ExternalInterface {
+   Module* wasm;
+   EvallingModuleRunner* instance;
+@@ -342,7 +347,9 @@
+     }
+ 
+     // If nothing was ever written to memories then there is nothing to update.
+-    if (!memories.empty()) {
++    // An unflattened memory cannot be written back at all, and nothing was
++    // written to it either: doStore() fails the ctor rather than let it.
++    if (flattenedMemory && !memories.empty()) {
+       applyMemoryToModule();
+     }
+ 
+@@ -533,6 +540,13 @@
+   }
+ 
+   template<typename T> void doStore(Address address, T value, Name memoryName) {
++    if (instanceInitialized && !flattenedMemory) {
++      // Nothing would carry this into the module: applyMemoryToModule() needs
++      // a single segment at offset 0. Fail this ctor, and only this one.
++      // Seeding the active segments at instantiation arrives here too, and
++      // must not be refused -- hence instanceInitialized.
++      throw FailToEvalException("write to unflattened memory");
++    }
+     Bits::writeLE<T>(value, getMemory(address, memoryName, sizeof(T)));
+   }
+ 
+@@ -1522,13 +1536,30 @@
+ }
+ 
+ static bool canEval(Module& wasm) {
+-  // Check if we can flatten memory. We need to do so currently because of how
+-  // we assume memory is simple and flat. TODO
+-  if (!MemoryUtils::flatten(wasm)) {
+-    if (!quiet) {
+-      std::cout << "  ...stopping since could not flatten memory\n";
++  // Flattening memory -- everything in one segment at offset 0 -- is what lets
++  // the memory image be written back when we are done. MemoryUtils::flatten
++  // refuses a module with a passive segment, and one where any expression
++  // names a segment; array.new_data is such an expression, and it is how a GC
++  // language materialises a constant array, so for those modules flattening
++  // never succeeds.
++  //
++  // Eval them anyway. Reading memory does not need a flat one: the interpreter
++  // seeds each active segment at its own offset, and array.new_data reads its
++  // segment directly. Only writing back does, so a ctor that writes memory is
++  // failed by doStore(), on its own, instead of the module being given up on.
++  flattenedMemory = MemoryUtils::flatten(wasm);
++  if (!flattenedMemory) {
++    // data.drop is the one memory effect that never reaches the external
++    // interface -- the interpreter records it in a set of its own -- so it
++    // cannot be caught one ctor at a time. Give up on the module, as before.
++    for (auto& func : wasm.functions) {
++      if (!func->imported() && !FindAll<DataDrop>(func->body).list.empty()) {
++        if (!quiet) {
++          std::cout << "  ...stopping since could not flatten memory\n";
++        }
++        return false;
++      }
+     }
+-    return false;
+   }
+   return true;
+ }

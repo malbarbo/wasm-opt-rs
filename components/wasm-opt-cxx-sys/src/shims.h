@@ -41,7 +41,8 @@ namespace wasm_opt_rs {
                    const std::string& ctors,
                    const std::string& keptExports,
                    bool ignoreExternalInput,
-                   bool quiet);
+                   bool quiet,
+                   uint32_t maxSteps);
 }
 
 namespace wasm_shims {
@@ -73,9 +74,10 @@ namespace wasm_shims {
                    std::string& ctors,
                    std::string& keptExports,
                    bool ignoreExternalInput,
-                   bool quiet) {
+                   bool quiet,
+                   uint32_t maxSteps) {
     return wasm_opt_rs::ctorEvalRun(
-      wasm, ctors, keptExports, ignoreExternalInput, quiet);
+      wasm, ctors, keptExports, ignoreExternalInput, quiet, maxSteps);
   }
 }
 

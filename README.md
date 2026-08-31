@@ -55,7 +55,9 @@ cargo build && cargo test
 ## Toolchain requirements
 
 Requires Rust 1.48+ and a C++ compiler with C++20 support,
-which is what Binaryen itself requires.
+which is what Binaryen itself requires,
+and `patch`, which applies `components/wasm-opt-sys/patches/`
+to copies of the Binaryen sources at build time.
 It does not require CMake or other C++ build tools.
 
 

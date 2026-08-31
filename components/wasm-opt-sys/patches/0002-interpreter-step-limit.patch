@@ -1,0 +1,88 @@
+Bound the interpreter by instructions executed.
+
+`wasm-ctor-eval` has no way to stop: a ctor that loops forever loops forever,
+and the command line tool relies on its caller killing the process. An embedder
+has nothing to kill.
+
+The two limits that exist do not serve. `maxLoopIterations` counts per entry to
+a loop, and reports a non-constant flow rather than a host limit -- that is
+`precompute`'s mechanism, not a budget. `maxDepth` does call `hostLimit`, but
+bounds only recursion.
+
+`ExpressionRunner::visit` is the one place every instruction passes through, and
+it is where `maxDepth` is already checked, so the counter goes beside it. It
+cannot be added from `wasm-ctor-eval.cpp` alone: `EvallingModuleRunner` is a CRTP
+subclass, but the base calls `visit` unqualified on itself, so an override there
+does not see the base's own calls.
+
+Exceeding it is a host limit, and `wasm-ctor-eval` already overrides `hostLimit`
+to throw `FailToEvalException` -- so the ctor that ran over fails, and the ones
+before it keep what they evalled. That is strictly better than a timeout, which
+loses the whole run.
+
+The count is over the life of the runner, not per call, so it bounds the work a
+caller can be made to do rather than the shape of one function. Zero, the
+default, is `NO_LIMIT` and nothing changes.
+
+--- a/src/wasm-interpreter.h
++++ b/src/wasm-interpreter.h
+@@ -330,6 +330,14 @@
+   Index maxDepth;
+   Index depth = 0;
+ 
++  // Maximum instructions before giving up, counted over the whole life of this
++  // runner rather than per call, so that it bounds the work a caller can be
++  // made to do and not just the shape of one function. maxLoopIterations does
++  // not serve for that: it is reset on each entry to a loop, and it reports a
++  // non-constant flow rather than a host limit.
++  Index maxSteps = NO_LIMIT;
++  Index steps = 0;
++
+   // Maximum iterations before giving up on a loop.
+   Index maxLoopIterations;
+ 
+@@ -598,6 +606,10 @@
+ 
+   void setRelaxedBehavior(RelaxedBehavior value) { relaxedBehavior = value; }
+ 
++  // Set after construction rather than taken as a constructor argument, which
++  // would have to be threaded through every subclass down to ModuleRunner.
++  void setMaxSteps(Index value) { maxSteps = value; }
++
+   Flow visit(Expression* curr) {
+ #if WASM_INTERPRETER_DEBUG
+     std::cout << indent() << "visit(" << getExpressionName(curr) << ")\n";
+@@ -607,6 +619,9 @@
+     if (maxDepth != NO_LIMIT && depth > maxDepth) {
+       hostLimit("interpreter recursion limit");
+     }
++    if (maxSteps != NO_LIMIT && ++steps > maxSteps) {
++      hostLimit("interpreter step limit");
++    }
+ 
+     // Execute the instruction.
+     Flow ret;
+--- a/src/tools/wasm-ctor-eval.cpp
++++ b/src/tools/wasm-ctor-eval.cpp
+@@ -306,6 +306,13 @@
+ // canEval(), which is where the reasoning is.
+ static bool flattenedMemory = true;
+ 
++// How many instructions evalling may execute before it gives up, or
++// ExpressionRunner::NO_LIMIT for no bound. Nothing here can time out, so a
++// caller that cannot afford an unbounded loop in a ctor has this instead.
++// Exceeding it is a host limit, which is to say it fails the ctor that ran
++// over -- see hostLimit() below -- rather than the process.
++static Index maxSteps = 0;
++
+ struct CtorEvalExternalInterface : EvallingModuleRunner::ExternalInterface {
+   Module* wasm;
+   EvallingModuleRunner* instance;
+@@ -1430,6 +1437,7 @@
+     // create an instance for evalling
+     EvallingModuleRunner instance(
+       wasm, &interface, interface.instanceInitialized, linkedInstances);
++    instance.setMaxSteps(maxSteps);
+     instance.instantiate();
+     interface.instanceInitialized = true;
+     // go one by one, in order, until we fail

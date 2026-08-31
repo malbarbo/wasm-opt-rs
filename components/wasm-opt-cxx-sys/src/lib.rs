@@ -53,6 +53,7 @@ pub mod wasm {
             keptExports: Pin<&mut CxxString>,
             ignoreExternalInput: bool,
             quiet: bool,
+            maxSteps: u32,
         ) -> Result<bool>;
     }
 

@@ -17,7 +17,7 @@ use thiserror::Error;
 
 /// The passes `wasm-ctor-eval` runs after evalling.
 const CLEANUP_PASSES: &[Pass] = &[
-    // The memory was flattened for evalling, so pack it again.
+    // The memory may have been flattened for evalling, so pack it again.
     Pass::MemoryPacking,
     Pass::RemoveUnusedNames,
     Pass::Dce,
@@ -130,6 +130,18 @@ pub struct CtorEvalOptions {
     /// Unlike the command line tool, this defaults to `true`: a library has no
     /// business writing to stdout unless asked to.
     pub quiet: bool,
+    /// How many instructions the evaluation may execute before giving up.
+    ///
+    /// This has no counterpart in `wasm-ctor-eval`, which can only be stopped
+    /// by killing the process. A ctor that runs over the limit fails, the way
+    /// one that reads an import does: the ctors evaluated before it keep what
+    /// they evaluated, and the ones after it are not attempted.
+    ///
+    /// The count is over the whole call, not per ctor, so it bounds the time
+    /// [`CtorEvalOptions::run`] can take.
+    ///
+    /// Default: `0`, which is no limit.
+    pub max_steps: u32,
 }
 
 impl CtorEvalOptions {
@@ -146,6 +158,7 @@ impl CtorEvalOptions {
             ignore_external_input: false,
             debug_info: false,
             quiet: true,
+            max_steps: 0,
         }
     }
 }
@@ -198,8 +211,8 @@ impl CtorEvalOptions {
             return Err(CtorEvalError::ValidateWasmInput);
         }
 
-        // Evalling needs a flat memory. If the memory cannot be flattened
-        // there is nothing to do but write the module back out.
+        // A module the evaluator will not touch at all is written back out
+        // unchanged.
         if ctor_eval_can_eval(&mut m) {
             let ctors = self.ctors.join(",");
             let kept_exports = self.kept_exports.join(",");
@@ -210,6 +223,7 @@ impl CtorEvalOptions {
                 &kept_exports,
                 self.ignore_external_input,
                 self.quiet,
+                self.max_steps,
             )
             .map_err(|e| CtorEvalError::Eval {
                 source: Box::from(e),

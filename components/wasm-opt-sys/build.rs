@@ -3,6 +3,7 @@ use std::fmt::Write as FmtWrite;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 fn main() -> anyhow::Result<()> {
     check_cxx20_support()?;
@@ -14,6 +15,9 @@ fn main() -> anyhow::Result<()> {
 
     let src_dir = binaryen_dir.join("src");
     let src_files = get_src_files(&src_dir)?;
+
+    // Our changes to binaryen, applied to copies under `OUT_DIR`.
+    let patched_src_dir = apply_patches(&src_dir)?;
 
     // Binaryen's `support/suffix_tree` uses LLVM headers even when the DWARF
     // support is not built, so the include path is always needed.
@@ -31,7 +35,7 @@ fn main() -> anyhow::Result<()> {
     let wasm_opt_src = tools_dir.join("wasm-opt.cpp");
     let wasm_opt_src = get_converted_wasm_opt_cpp(&wasm_opt_src)?;
 
-    let wasm_ctor_eval_src = tools_dir.join("wasm-ctor-eval.cpp");
+    let wasm_ctor_eval_src = patched_src_dir.join("tools/wasm-ctor-eval.cpp");
     let wasm_ctor_eval_src = get_converted_wasm_ctor_eval_cpp(&wasm_ctor_eval_src)?;
 
     let wasm_intrinsics_src = get_converted_wasm_intrinsics_cpp(&src_dir)?;
@@ -44,6 +48,8 @@ fn main() -> anyhow::Result<()> {
 
     // Set up cxx's include path so that wasm-opt-cxx-sys's C++ header can
     // include from these same dirs.
+    // The patched headers come first, so that they shadow the originals.
+    CFG.exported_header_dirs.push(&patched_src_dir);
     CFG.exported_header_dirs.push(&src_dir);
     CFG.exported_header_dirs.push(&tools_dir);
     CFG.exported_header_dirs.push(&output_dir);
@@ -104,6 +110,73 @@ fn main() -> anyhow::Result<()> {
     builder.compile("wasm-opt-cc");
 
     Ok(())
+}
+
+/// Applies `patches/` to copies of the binaryen sources, and returns the
+/// directory holding them.
+///
+/// The copies mirror binaryen's `src/`, so that `patch -p1` finds its targets
+/// by the paths the patch names, and so that the directory can go on the
+/// include path ahead of the original and shadow a patched header. They are
+/// made fresh on every run: a patch applies to a pristine file or the build
+/// fails, and there is no state to get out of step.
+///
+/// This needs `patch` at build time, the way the build already needs a C++
+/// compiler.
+fn apply_patches(src_dir: &Path) -> anyhow::Result<PathBuf> {
+    let output_dir = std::env::var("OUT_DIR")?;
+    let patched_dir = Path::new(&output_dir).join("patched-src");
+
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")?;
+    let patches_dir = Path::new(&manifest_dir).join("patches");
+
+    let mut patches: Vec<PathBuf> = fs::read_dir(&patches_dir)?
+        .map(|e| e.map(|e| e.path()))
+        .collect::<Result<_, std::io::Error>>()?;
+    // Applied in name order: `0002` is written against the file `0001` leaves.
+    patches.sort();
+
+    let mut copied: Vec<PathBuf> = Vec::new();
+    for patch in &patches {
+        println!("cargo::rerun-if-changed={}", patch.display());
+
+        // Every file the patch names, copied over pristine before the first
+        // patch that touches it -- otherwise `patch` writes outside the copy.
+        for file in patched_paths(patch)? {
+            if copied.contains(&file) {
+                continue;
+            }
+            let dst = patched_dir.join(&file);
+            fs::create_dir_all(dst.parent().expect("joined onto a directory"))?;
+            fs::copy(src_dir.join(file.strip_prefix("src")?), &dst)?;
+            copied.push(file);
+        }
+
+        let status = Command::new("patch")
+            .current_dir(&patched_dir)
+            .arg("-p1")
+            .arg("--no-backup-if-mismatch")
+            .arg("-i")
+            .arg(patch)
+            .status();
+
+        match status {
+            Ok(status) if status.success() => {}
+            Ok(status) => anyhow::bail!("{} did not apply: {}", patch.display(), status),
+            Err(e) => anyhow::bail!("could not run `patch` for {}: {}", patch.display(), e),
+        }
+    }
+
+    Ok(patched_dir.join("src"))
+}
+
+/// The paths a patch changes, as `patch -p1` resolves them.
+fn patched_paths(patch: &Path) -> anyhow::Result<Vec<PathBuf>> {
+    Ok(fs::read_to_string(patch)?
+        .lines()
+        .filter_map(|line| line.strip_prefix("+++ b/"))
+        .map(|path| PathBuf::from(path.split('\t').next().expect("split yields one")))
+        .collect())
 }
 
 /// Finds the binaryen source directory.
@@ -219,12 +292,14 @@ bool ctorEvalRun(wasm::Module& wasm,
                  const std::string& ctors,
                  const std::string& keptExports,
                  bool ignoreExternalInputArg,
-                 bool quietArg) {
+                 bool quietArg,
+                 uint32_t maxStepsArg) {
   // These are statics of this translation unit, and `main` only ever sets
   // them. Assign all of them so that a call cannot observe the state left
   // behind by a previous one.
   ignoreExternalInput = ignoreExternalInputArg;
   quiet = quietArg;
+  maxSteps = maxStepsArg;
   invalidState = false;
 
   // `wasm-ctor-eval` splits these the same way, so that a name containing a

@@ -417,8 +417,11 @@ pub fn validate_wasm(wasm: &mut Module) -> bool {
 
 /// Whether the module is in a shape that ctor evaluation can handle.
 ///
-/// This flattens the module's memory, so it modifies the module even when it
-/// returns false.
+/// This tries to flatten the module's memory, so it modifies the module either
+/// way. Failing to flatten is not a refusal: it only means the evalled memory
+/// cannot be written back, so a ctor that writes memory fails on its own. What
+/// is refused is a module holding a `data.drop`, whose effect cannot be caught
+/// that way.
 pub fn ctor_eval_can_eval(wasm: &mut Module) -> bool {
     wasm::ctorEvalCanEval(wasm.0.pin_mut())
 }
@@ -426,6 +429,9 @@ pub fn ctor_eval_can_eval(wasm: &mut Module) -> bool {
 /// Evaluates `ctors`, in order, until one of them cannot be evaluated.
 ///
 /// `ctors` and `kept_exports` are comma-separated lists of export names.
+///
+/// `max_steps` bounds the instructions the whole call may execute, or is zero
+/// for no bound. A ctor that runs over it fails, as one reading an import does.
 ///
 /// Returns false if evalling ran into something it could not handle and left
 /// the module in a state that cannot be written out. The caller must then
@@ -436,6 +442,7 @@ pub fn ctor_eval_run(
     kept_exports: &str,
     ignore_external_input: bool,
     quiet: bool,
+    max_steps: u32,
 ) -> Result<bool, cxx::Exception> {
     let_cxx_string!(ctors = ctors);
     let_cxx_string!(kept_exports = kept_exports);
@@ -446,6 +453,7 @@ pub fn ctor_eval_run(
         kept_exports,
         ignore_external_input,
         quiet,
+        max_steps,
     )
 }
 
