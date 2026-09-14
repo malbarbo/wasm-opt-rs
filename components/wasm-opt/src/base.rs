@@ -426,16 +426,28 @@ pub fn ctor_eval_can_eval(wasm: &mut Module) -> bool {
     wasm::ctorEvalCanEval(wasm.0.pin_mut())
 }
 
+/// How [`ctor_eval_run`] ended.
+pub enum CtorEvalEnd {
+    /// Every ctor was evaluated.
+    Finished,
+    /// Evaluation stopped at this ctor. The ones before it were evaluated, and
+    /// the ones after it were not tried.
+    StoppedAt(String),
+    /// Evaluation stopped before trying any ctor: the module could not be
+    /// instantiated.
+    NotInstantiated,
+    /// Evaluation ran into something it could not handle and left the module
+    /// in a state that cannot be written out. The caller must discard the
+    /// module and start over from the input.
+    InvalidState,
+}
+
 /// Evaluates `ctors`, in order, until one of them cannot be evaluated.
 ///
 /// `ctors` and `kept_exports` are comma-separated lists of export names.
 ///
 /// `max_steps` bounds the instructions the whole call may execute, or is zero
 /// for no bound. A ctor that runs over it fails, as one reading an import does.
-///
-/// Returns false if evalling ran into something it could not handle and left
-/// the module in a state that cannot be written out. The caller must then
-/// discard the module and start over from the input.
 pub fn ctor_eval_run(
     wasm: &mut Module,
     ctors: &str,
@@ -443,18 +455,28 @@ pub fn ctor_eval_run(
     ignore_external_input: bool,
     quiet: bool,
     max_steps: u32,
-) -> Result<bool, cxx::Exception> {
+) -> Result<CtorEvalEnd, cxx::Exception> {
     let_cxx_string!(ctors = ctors);
     let_cxx_string!(kept_exports = kept_exports);
+    let_cxx_string!(stopped_at = "");
 
-    wasm::ctorEvalRun(
+    let end = wasm::ctorEvalRun(
         wasm.0.pin_mut(),
         ctors,
         kept_exports,
         ignore_external_input,
         quiet,
         max_steps,
-    )
+        stopped_at.as_mut(),
+    )?;
+
+    Ok(match end {
+        0 => CtorEvalEnd::Finished,
+        1 if stopped_at.is_empty() => CtorEvalEnd::NotInstantiated,
+        1 => CtorEvalEnd::StoppedAt(stopped_at.to_string_lossy().into_owned()),
+        2 => CtorEvalEnd::InvalidState,
+        _ => unreachable!("ctorEvalRun returned {}", end),
+    })
 }
 
 pub fn check_inlining_options_defaults(inlining_options: InliningOptions) -> bool {

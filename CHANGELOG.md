@@ -29,6 +29,16 @@
   executes exported functions at compile time and applies their effects to the
   module. It supports the same options as the command line tool, which is not
   itself installed by this crate.
+- `CtorEvalOptions::run` returns a `CtorEvalOutcome`, which says where
+  evaluation stopped: at a ctor it names, or before evaluating anything with no
+  ctor to blame -- because the module could not be instantiated, say -- or not
+  at all. The command line tool says this only on stdout, and without it a
+  caller that sets the failing ctor aside and runs again cannot tell a ctor
+  that failed from a start function that did.
+- `CtorEvalOptions::run` can be called from several threads at once. Binaryen's
+  tool keeps one evaluation's state in statics, which is safe in a process that
+  evaluates one module, and those are now per thread: before, one call could
+  read another's step limit, or the ctor it had stopped at.
 - Fixed an abort when optimizing any module containing an exception. The C++ is
   now built with `-fno-rtti` and `-fno-omit-frame-pointer`, which is how
   Binaryen's own CMake builds it: at `-O3` with RTTI, gcc 14 leaves the

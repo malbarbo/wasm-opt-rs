@@ -288,12 +288,17 @@ namespace wasm_opt_rs {
 
 bool ctorEvalCanEval(wasm::Module& wasm) { return canEval(wasm); }
 
-bool ctorEvalRun(wasm::Module& wasm,
-                 const std::string& ctors,
-                 const std::string& keptExports,
-                 bool ignoreExternalInputArg,
-                 bool quietArg,
-                 uint32_t maxStepsArg) {
+// How evalling ended: 0 when every ctor was evalled; 1 when it stopped, at the
+// ctor written to `stoppedAtOut` or, when that is empty, before trying any; and
+// 2 when it left the module in a state that cannot be written out, which the
+// caller must then discard.
+uint8_t ctorEvalRun(wasm::Module& wasm,
+                    const std::string& ctors,
+                    const std::string& keptExports,
+                    bool ignoreExternalInputArg,
+                    bool quietArg,
+                    uint32_t maxStepsArg,
+                    std::string& stoppedAtOut) {
   // These are statics of this translation unit, and `main` only ever sets
   // them. Assign all of them so that a call cannot observe the state left
   // behind by a previous one.
@@ -315,7 +320,11 @@ bool ctorEvalRun(wasm::Module& wasm,
   evalCtors(wasm, ctorList, keptExportList);
 
   // Evalling can leave the module in a state that cannot be written out.
-  return !invalidState;
+  if (invalidState) {
+    return 2;
+  }
+  stoppedAtOut = stoppedAt;
+  return stopped ? 1 : 0;
 }
 
 } // namespace wasm_opt_rs

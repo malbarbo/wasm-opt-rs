@@ -133,8 +133,9 @@
 //!
 //! Evaluation proceeds through the ctors in order and stops at the first one
 //! it cannot evaluate, which is not an error &mdash; the module is written out
-//! with whatever was evalled before it. Set [`CtorEvalOptions::quiet`] to
-//! `false` to have the reason logged to stdout, as the command line tool does.
+//! with whatever was evalled before it, and the returned [`CtorEvalOutcome`]
+//! names the ctor it stopped at. Set [`CtorEvalOptions::quiet`] to `false` to
+//! have the reason logged to stdout, as the command line tool does.
 //!
 //! Unlike `wasm-opt`, the `wasm-ctor-eval` command line tool is not installed
 //! by this crate.
@@ -165,7 +166,7 @@ pub use api::*;
 pub use run::OptimizationError;
 
 // The `wasm-ctor-eval` API.
-pub use ctor_eval::{CtorEvalError, CtorEvalOptions};
+pub use ctor_eval::{CtorEvalError, CtorEvalOptions, CtorEvalOutcome};
 
 // Easy integration with tools that already use `wasm-opt` via CLI.
 pub mod integration;

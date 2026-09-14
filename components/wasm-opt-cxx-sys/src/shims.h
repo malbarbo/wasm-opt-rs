@@ -37,12 +37,13 @@ namespace rust::behavior {
 namespace wasm_opt_rs {
   bool ctorEvalCanEval(wasm::Module& wasm);
 
-  bool ctorEvalRun(wasm::Module& wasm,
-                   const std::string& ctors,
-                   const std::string& keptExports,
-                   bool ignoreExternalInput,
-                   bool quiet,
-                   uint32_t maxSteps);
+  uint8_t ctorEvalRun(wasm::Module& wasm,
+                      const std::string& ctors,
+                      const std::string& keptExports,
+                      bool ignoreExternalInput,
+                      bool quiet,
+                      uint32_t maxSteps,
+                      std::string& stoppedAt);
 }
 
 namespace wasm_shims {
@@ -68,16 +69,19 @@ namespace wasm_shims {
     return wasm_opt_rs::ctorEvalCanEval(wasm);
   }
 
-  // Returns false if evalling left the module in a state that cannot be
-  // written out, in which case the caller must discard it.
-  bool ctorEvalRun(wasm::Module& wasm,
-                   std::string& ctors,
-                   std::string& keptExports,
-                   bool ignoreExternalInput,
-                   bool quiet,
-                   uint32_t maxSteps) {
+  // Returns 0 when every ctor was evalled; 1 when evalling stopped, at the ctor
+  // written to `stoppedAt` or, when that is empty, before trying any; and 2 when
+  // it left the module in a state that cannot be written out, in which case the
+  // caller must discard it.
+  uint8_t ctorEvalRun(wasm::Module& wasm,
+                      std::string& ctors,
+                      std::string& keptExports,
+                      bool ignoreExternalInput,
+                      bool quiet,
+                      uint32_t maxSteps,
+                      std::string& stoppedAt) {
     return wasm_opt_rs::ctorEvalRun(
-      wasm, ctors, keptExports, ignoreExternalInput, quiet, maxSteps);
+      wasm, ctors, keptExports, ignoreExternalInput, quiet, maxSteps, stoppedAt);
   }
 }
 

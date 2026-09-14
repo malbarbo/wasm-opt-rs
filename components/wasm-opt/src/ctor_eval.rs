@@ -6,8 +6,8 @@
 
 use crate::api::{Features, FileType, ReaderOptions, WriterOptions};
 use crate::base::{
-    ctor_eval_can_eval, ctor_eval_run, validate_wasm, Module, ModuleReader, ModuleWriter,
-    PassRunner,
+    ctor_eval_can_eval, ctor_eval_run, validate_wasm, CtorEvalEnd, Module, ModuleReader,
+    ModuleWriter, PassRunner,
 };
 use crate::passes::Pass;
 use crate::run::convert_feature_sets;
@@ -60,6 +60,24 @@ pub enum CtorEvalError {
     /// but the API does not support reading stdin.
     #[error("Refusing to read from stdin")]
     InvalidStdinPath,
+}
+
+/// How far [`CtorEvalOptions::run`] got.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CtorEvalOutcome {
+    /// Every ctor was evaluated.
+    Finished,
+    /// Evaluation stopped at this ctor, which is left in the module with
+    /// whatever of it was evaluated. The ctors before it were evaluated, and
+    /// the ones after it were not tried, so setting this one aside and running
+    /// again is how to get further.
+    StoppedAt(String),
+    /// Nothing was evaluated, and no ctor is named as the reason: the module
+    /// holds a `data.drop`, or it could not be instantiated -- its start
+    /// function calls an import, say -- or evaluating left it in a state that
+    /// could not be written out. Running again without some ctor would stop
+    /// the same way.
+    NothingEvaluated,
 }
 
 /// Options for evaluating global constructors at compile time.
@@ -177,8 +195,9 @@ impl CtorEvalOptions {
     /// [`CtorEvalOptions::ctors`], and writes the module back to a file.
     ///
     /// A ctor that cannot be evaluated is not an error: evaluation just stops
-    /// there, and the module is written out with whatever was evalled before
-    /// it. Set [`CtorEvalOptions::quiet`] to `false` to see why it stopped.
+    /// there, the module is written out with whatever was evalled before it,
+    /// and the returned [`CtorEvalOutcome`] says where it stopped. Set
+    /// [`CtorEvalOptions::quiet`] to `false` to see why.
     ///
     /// # Errors
     ///
@@ -193,7 +212,7 @@ impl CtorEvalOptions {
         &self,
         infile: impl AsRef<Path>,
         outfile: impl AsRef<Path>,
-    ) -> Result<(), CtorEvalError> {
+    ) -> Result<CtorEvalOutcome, CtorEvalError> {
         let infile: &Path = infile.as_ref();
         let outfile: &Path = outfile.as_ref();
 
@@ -213,11 +232,11 @@ impl CtorEvalOptions {
 
         // A module the evaluator will not touch at all is written back out
         // unchanged.
-        if ctor_eval_can_eval(&mut m) {
+        let outcome = if ctor_eval_can_eval(&mut m) {
             let ctors = self.ctors.join(",");
             let kept_exports = self.kept_exports.join(",");
 
-            let valid_state = ctor_eval_run(
+            let end = ctor_eval_run(
                 &mut m,
                 &ctors,
                 &kept_exports,
@@ -229,16 +248,22 @@ impl CtorEvalOptions {
                 source: Box::from(e),
             })?;
 
-            if !valid_state {
-                // Evalling ran into something it could not handle partway
-                // through, leaving the module in a state that cannot be
-                // written out. Forget all of it by reading the input again,
-                // with nothing at all evalled.
-                //
-                // As `wasm-ctor-eval` does, the type order is not discarded
-                // on this path.
-                m = self.read_module(infile)?;
-            }
+            let outcome = match end {
+                CtorEvalEnd::Finished => CtorEvalOutcome::Finished,
+                CtorEvalEnd::StoppedAt(ctor) => CtorEvalOutcome::StoppedAt(ctor),
+                CtorEvalEnd::NotInstantiated => CtorEvalOutcome::NothingEvaluated,
+                CtorEvalEnd::InvalidState => {
+                    // Evalling ran into something it could not handle partway
+                    // through, leaving the module in a state that cannot be
+                    // written out. Forget all of it by reading the input again,
+                    // with nothing at all evalled.
+                    //
+                    // As `wasm-ctor-eval` does, the type order is not discarded
+                    // on this path.
+                    m = self.read_module(infile)?;
+                    CtorEvalOutcome::NothingEvaluated
+                }
+            };
 
             if !validate_wasm(&mut m) {
                 return Err(CtorEvalError::ValidateWasmOutput);
@@ -251,9 +276,15 @@ impl CtorEvalOptions {
                 .for_each(|pass| pass_runner.add(pass.name()));
 
             pass_runner.run();
-        }
 
-        self.write_module(&mut m, outfile)
+            outcome
+        } else {
+            CtorEvalOutcome::NothingEvaluated
+        };
+
+        self.write_module(&mut m, outfile)?;
+
+        Ok(outcome)
     }
 
     fn read_module(&self, infile: &Path) -> Result<Module, CtorEvalError> {

@@ -54,7 +54,8 @@ pub mod wasm {
             ignoreExternalInput: bool,
             quiet: bool,
             maxSteps: u32,
-        ) -> Result<bool>;
+            stoppedAt: Pin<&mut CxxString>,
+        ) -> Result<u8>;
     }
 
     unsafe extern "C++" {

@@ -1,0 +1,100 @@
+Report where ctor evaluation stopped.
+
+`evalCtors` stops at the first ctor it cannot eval, and says why only on
+stdout. An embedder that sets that ctor aside and tries again -- the only way
+to eval the ctors after it -- has to find it without the log, and the natural
+guess, the first ctor still exported, is right only when evalling started at
+all. When the module cannot be instantiated -- its start function calls an
+import, say -- no ctor was tried, every retry fails the same way, and the guess
+blames one innocent ctor per retry.
+
+So record it: `stopped` is whether evalling stopped before evalling every ctor,
+and `stoppedAt` is the ctor it stopped at, or empty when it stopped before
+trying any. The catches around the loop are outside `evalCtor()`, and what they
+catch can come after instantiation -- serialising a global in `applyToModule()`
+throws the same exception -- so the loop keeps the ctor being tried for them to
+name.
+
+Nothing is evalled differently, and nothing is printed differently.
+
+--- a/src/tools/wasm-ctor-eval.cpp
++++ b/src/tools/wasm-ctor-eval.cpp
+@@ -1416,6 +1416,16 @@
+ //       enough at some point.
+ static bool invalidState = false;
+ 
++// Where the last evalCtors() stopped, for a caller that has no log to read.
++// `stopped` is false when every ctor was evalled. Otherwise `stoppedAt` names
++// the ctor evalling stopped at, and is empty when it stopped before trying any:
++// the module could not even be instantiated, because its start function calls
++// an import, say. Telling those two apart is the whole point -- a caller that
++// sets the named ctor aside and tries again gets further, and one that does so
++// after a failed instantiation fails the same way every time.
++static bool stopped = false;
++static std::string stoppedAt;
++
+ // Eval all ctors in a module.
+ void evalCtors(Module& wasm,
+                std::vector<std::string>& ctors,
+@@ -1433,6 +1443,11 @@
+   linkedInstances[envModule->name] = envInstance;
+ 
+   CtorEvalExternalInterface interface(linkedInstances);
++  stopped = false;
++  stoppedAt.clear();
++  // The ctor being tried, so that the catches below, which are outside
++  // evalCtor(), can still name it.
++  std::string trying;
+   try {
+     // create an instance for evalling
+     EvallingModuleRunner instance(
+@@ -1446,6 +1461,7 @@
+       if (!quiet) {
+         std::cout << "trying to eval " << ctor << '\n';
+       }
++      trying = ctor;
+       Export* ex = wasm.getExportOrNull(ctor);
+       if (!ex || ex->kind != ExternalKind::Function) {
+         Fatal() << "export not found: " << ctor;
+@@ -1487,6 +1503,8 @@
+         if (!quiet) {
+           std::cout << "  ...stopping\n";
+         }
++        stopped = true;
++        stoppedAt = ctor;
+         return;
+       }
+ 
+@@ -1515,6 +1533,7 @@
+         wasm.addFunction(std::move(copyFunc));
+         *wasm.getExport(exp->name)->getInternalName() = copyName;
+       }
++      trying.clear();
+     }
+   } catch (FailToEvalException& fail) {
+     // That's it, we failed to even create the instance.
+@@ -1522,11 +1541,15 @@
+       std::cout << "  ...stopping since could not create module instance: "
+                 << fail.why << "\n";
+     }
++    stopped = true;
++    stoppedAt = trying;
+   } catch (NonconstantException& fail) {
+     // We can also fail during start due to a non-constant operation.
+     if (!quiet) {
+       std::cout << "  ...stopping since non-constant in start\n";
+     }
++    stopped = true;
++    stoppedAt = trying;
+   } catch (TopologicalSort::CycleException e) {
+     // We use a topological sort for GC globals. If there is a non-breakable
+     // cycle there, we will hit an error (we can break cycles in nullable and
+@@ -1535,6 +1558,8 @@
+     if (!quiet) {
+       std::cout << "  ...stopping since global sorting hit a cycle\n";
+     }
++    stopped = true;
++    stoppedAt = trying;
+ 
+     // We found the cycle during the processing of globals, making wasm->globals
+     // invalid. Rather than refactor the code heavily to handle this very rare

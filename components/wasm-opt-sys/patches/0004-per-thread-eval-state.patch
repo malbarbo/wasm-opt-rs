@@ -1,0 +1,64 @@
+Keep the evaluator's per-call state per thread.
+
+`wasm-ctor-eval.cpp` keeps what one evaluation needs in statics at file scope:
+the options `main` sets (`ignoreExternalInput`, `quiet`), `invalidState`, and
+the ones the patches before this add (`flattenedMemory`, `maxSteps`, and where
+evaluation `stopped`). A command line tool evaluates one module per process, so
+there that is safe. An embedder may evaluate two modules on two threads at once
+-- a test harness does -- and then one call reads what another wrote: whether
+its memory was flattened, its step limit, the ctor it stopped at. The API's own
+tests, which run in parallel, failed four runs in five that way, and never on
+one thread.
+
+Make them `thread_local`. A call sets each of them on the thread it evaluates
+on before it reads it, so a call sees only its own, and nothing else changes.
+
+--- a/src/tools/wasm-ctor-eval.cpp
++++ b/src/tools/wasm-ctor-eval.cpp
+@@ -296,22 +296,22 @@
+ // Whether to ignore external input to the program as it runs. If set, we will
+ // assume that stdin is empty, that any env vars we try to read are not set,
+ // that there are not arguments passed to main, etc.
+-static bool ignoreExternalInput = false;
++static thread_local bool ignoreExternalInput = false;
+ 
+ // Whether to emit informative logging to stdout about the eval process.
+-static bool quiet = false;
++static thread_local bool quiet = false;
+ 
+ // Whether linear memory was flattened into the one segment at offset 0 that
+ // applyMemoryToModule() writes an evalled memory image back into. Set by
+ // canEval(), which is where the reasoning is.
+-static bool flattenedMemory = true;
++static thread_local bool flattenedMemory = true;
+ 
+ // How many instructions evalling may execute before it gives up, or
+ // ExpressionRunner::NO_LIMIT for no bound. Nothing here can time out, so a
+ // caller that cannot afford an unbounded loop in a ctor has this instead.
+ // Exceeding it is a host limit, which is to say it fails the ctor that ran
+ // over -- see hostLimit() below -- rather than the process.
+-static Index maxSteps = 0;
++static thread_local Index maxSteps = 0;
+ 
+ struct CtorEvalExternalInterface : EvallingModuleRunner::ExternalInterface {
+   Module* wasm;
+@@ -1414,7 +1414,7 @@
+ // work. In that case we give up, throwing away the invalid state in memory.
+ // TODO: Handle all those situations more gracefully, if that becomes useful
+ //       enough at some point.
+-static bool invalidState = false;
++static thread_local bool invalidState = false;
+ 
+ // Where the last evalCtors() stopped, for a caller that has no log to read.
+ // `stopped` is false when every ctor was evalled. Otherwise `stoppedAt` names
+@@ -1423,8 +1423,8 @@
+ // an import, say. Telling those two apart is the whole point -- a caller that
+ // sets the named ctor aside and tries again gets further, and one that does so
+ // after a failed instantiation fails the same way every time.
+-static bool stopped = false;
+-static std::string stoppedAt;
++static thread_local bool stopped = false;
++static thread_local std::string stoppedAt;
+ 
+ // Eval all ctors in a module.
+ void evalCtors(Module& wasm,
