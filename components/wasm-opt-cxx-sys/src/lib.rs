@@ -56,6 +56,16 @@ pub mod wasm {
             maxSteps: u32,
             stoppedAt: Pin<&mut CxxString>,
         ) -> Result<u8>;
+
+        fn mergeBegin(wasm: Pin<&mut Module>, name: Pin<&mut CxxString>, mode: u8);
+
+        fn mergeAdd(wasm: Pin<&mut Module>, name: Pin<&mut CxxString>) -> Result<()>;
+
+        fn mergeEnd(
+            validate: bool,
+            restrict: bool,
+            exports: Pin<&mut CxxString>,
+        ) -> Result<()>;
     }
 
     unsafe extern "C++" {

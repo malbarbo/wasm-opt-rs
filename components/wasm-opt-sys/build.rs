@@ -38,6 +38,9 @@ fn main() -> anyhow::Result<()> {
     let wasm_ctor_eval_src = patched_src_dir.join("tools/wasm-ctor-eval.cpp");
     let wasm_ctor_eval_src = get_converted_wasm_ctor_eval_cpp(&wasm_ctor_eval_src)?;
 
+    let wasm_merge_src = patched_src_dir.join("tools/wasm-merge.cpp");
+    let wasm_merge_src = get_converted_wasm_merge_cpp(&wasm_merge_src)?;
+
     let wasm_intrinsics_src = get_converted_wasm_intrinsics_cpp(&src_dir)?;
 
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")?;
@@ -103,6 +106,7 @@ fn main() -> anyhow::Result<()> {
         .files(src_files)
         .file(wasm_opt_src)
         .file(wasm_ctor_eval_src)
+        .file(wasm_merge_src)
         .file(wasm_intrinsics_src);
 
     builder.files(&llvm_files);
@@ -325,6 +329,106 @@ uint8_t ctorEvalRun(wasm::Module& wasm,
   }
   stoppedAtOut = stoppedAt;
   return stopped ? 1 : 0;
+}
+
+} // namespace wasm_opt_rs
+"#;
+
+/// Renames `main` and appends a bridge, as for `wasm-ctor-eval.cpp`.
+///
+/// The merge is in an anonymous namespace too, and `main` reads and writes
+/// the module it merges into through the per-thread pointer `0005` gives it,
+/// so the bridge points that at the caller's module instead.
+fn get_converted_wasm_merge_cpp(src: &Path) -> anyhow::Result<PathBuf> {
+    let reader = BufReader::new(File::open(src)?);
+
+    let output_dir = std::env::var("OUT_DIR")?;
+    let output_dir = Path::new(&output_dir);
+
+    let temp_file_dir = output_dir.join("wasm_merge.cpp.temp");
+    let mut writer = BufWriter::new(File::create(&temp_file_dir)?);
+    for line in reader.lines() {
+        let mut line = line?;
+        if line.contains("int main") {
+            line = line.replace("int main", "extern \"C\" int wasm_merge_main_actual");
+        }
+        writer.write_all(line.as_bytes())?;
+        writer.write_all(b"\n")?;
+    }
+
+    writer.write_all(WASM_MERGE_BRIDGE.as_bytes())?;
+    writer.flush()?;
+    drop(writer);
+
+    let output_wasm_merge_file = output_dir.join("wasm-merge.cpp");
+    fs::rename(&temp_file_dir, &output_wasm_merge_file)?;
+
+    Ok(output_wasm_merge_file)
+}
+
+/// The bridge appended to `wasm-merge.cpp`.
+///
+/// It is declared by `wasm-opt-cxx-sys`'s `shims.h`. It is `main`'s loop
+/// over the inputs, split so that the caller reads each module itself: the
+/// first is the one merged into, and the rest are merged into it in order.
+const WASM_MERGE_BRIDGE: &str = r#"
+//
+// Appended by wasm-opt-sys's build script.
+//
+
+#include "support/string.h"
+
+namespace wasm_opt_rs {
+
+void mergeBegin(wasm::Module& wasm, const std::string& name, uint8_t mode) {
+  mergedModule = &wasm;
+  startFunctions.clear();
+  exportModuleMap.clear();
+  exportMergeMode = ExportMergeMode(mode);
+
+  wasm::Name inputName(name);
+  for (auto& curr : merged.exports) {
+    exportModuleMap[curr.get()] = ExportInfo{inputName, curr->name};
+  }
+  if (merged.start) {
+    startFunctions.push_back(merged.start);
+    merged.start = wasm::Name();
+  }
+}
+
+void mergeAdd(wasm::Module& input, const std::string& name) {
+  mergeInto(input, wasm::Name(name));
+}
+
+void mergeEnd(bool validate, bool restrict, const std::string& exports) {
+  wasm::PassOptions options;
+  options.validate = validate;
+  fuseImportsAndExports(options);
+  updateTypes(merged);
+  mergeStartFunctions();
+
+  // What the merged module exports, when the caller says: an export an
+  // input had only so that another could import it is gone, and so is what
+  // only it kept alive, which the passes below remove.
+  if (restrict) {
+    std::unordered_set<wasm::Name> kept;
+    for (auto& name : wasm::String::Split(exports, ",")) {
+      kept.insert(wasm::Name(name));
+    }
+    merged.removeExports(
+      [&](wasm::Export* curr) { return !kept.contains(curr->name); });
+  }
+  {
+    wasm::PassRunner passRunner(&merged);
+    passRunner.add("reorder-globals-always");
+    passRunner.add("remove-unused-module-elements");
+    passRunner.run();
+  }
+
+  // The map's keys are exports of the caller's module, which outlives this.
+  exportModuleMap.clear();
+  startFunctions.clear();
+  mergedModule = nullptr;
 }
 
 } // namespace wasm_opt_rs

@@ -56,6 +56,12 @@
   and the rest are evaluated. A module holding a `data.drop` is still refused:
   that effect never reaches the external interface, so it cannot be caught one
   ctor at a time.
+- Added `MergeOptions`, an API for Binaryen's `wasm-merge` tool, which merges
+  modules into the first, fusing each import that names another input's
+  export to it. `MergeOptions::exports` says what the merged module exports,
+  which the tool cannot be told: an export one input had only for another to
+  import is removed, and what only it kept. Merges can run on several threads
+  at once; the tool's state is per thread.
 - Added `CtorEvalOptions::max_steps`, which bounds the instructions an
   evaluation may execute. Binaryen's evaluator cannot time out, so without this
   a ctor that does not terminate does not either. Running over it fails that

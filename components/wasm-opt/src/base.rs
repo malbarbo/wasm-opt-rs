@@ -479,6 +479,35 @@ pub fn ctor_eval_run(
     })
 }
 
+/// Starts a `wasm-merge` into `wasm`, which the modules [`merge_add`] is given
+/// are merged into, under the name `name` their imports find it by.
+///
+/// `mode` is what an export name `wasm` has already does to a later one: 0
+/// fails, 1 renames it, 2 drops it. The state is per thread, so the three
+/// calls of one merge are made on one thread, and `wasm` is not touched
+/// between them except through them.
+pub fn merge_begin(wasm: &mut Module, name: &str, mode: u8) {
+    let_cxx_string!(name = name);
+
+    wasm::mergeBegin(wasm.0.pin_mut(), name, mode);
+}
+
+/// Merges `input` into the module [`merge_begin`] named, as `name`. `input`
+/// is consumed by the merge, which renames its items in place.
+pub fn merge_add(input: &mut Module, name: &str) -> Result<(), cxx::Exception> {
+    let_cxx_string!(name = name);
+
+    wasm::mergeAdd(input.0.pin_mut(), name)
+}
+
+/// Fuses every import to the export it names, and ends the merge. With
+/// `exports`, the merged module exports those names and no others.
+pub fn merge_end(validate: bool, exports: Option<&[String]>) -> Result<(), cxx::Exception> {
+    let_cxx_string!(list = exports.map(|e| e.join(",")).unwrap_or_default());
+
+    wasm::mergeEnd(validate, exports.is_some(), list)
+}
+
 pub fn check_inlining_options_defaults(inlining_options: InliningOptions) -> bool {
     wasm::checkInliningOptionsDefaults(inlining_options.0)
 }

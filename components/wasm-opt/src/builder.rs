@@ -1,7 +1,8 @@
-//! A builder API for `OptimizationOptions` and `CtorEvalOptions`.
+//! A builder API for `OptimizationOptions`, `CtorEvalOptions` and `MergeOptions`.
 
 use crate::api::*;
 use crate::ctor_eval::CtorEvalOptions;
+use crate::merge::{ExportConflicts, MergeOptions};
 
 /// Builder methods.
 impl OptimizationOptions {
@@ -260,6 +261,45 @@ impl CtorEvalOptions {
     ///
     /// This adds the feature to [`Features::disabled`], and is equivalent to
     /// the `--disable-{feature}` command line arguments.
+    pub fn disable_feature(&mut self, feature: Feature) -> &mut Self {
+        self.features.disabled.insert(feature);
+        self
+    }
+}
+
+/// Builder methods.
+impl MergeOptions {
+    /// Sets [`WriterOptions::file_type`].
+    pub fn writer_file_type(&mut self, value: FileType) -> &mut Self {
+        self.writer.file_type = value;
+        self
+    }
+
+    /// Sets [`MergeOptions::export_conflicts`].
+    pub fn export_conflicts(&mut self, value: ExportConflicts) -> &mut Self {
+        self.export_conflicts = value;
+        self
+    }
+
+    /// Sets [`MergeOptions::exports`].
+    pub fn exports(&mut self, value: Vec<String>) -> &mut Self {
+        self.exports = Some(value);
+        self
+    }
+
+    /// Sets [`MergeOptions::debug_info`].
+    pub fn debug_info(&mut self, value: bool) -> &mut Self {
+        self.debug_info = value;
+        self
+    }
+
+    /// Sets the baseline feature set to [`FeatureBaseline::All`].
+    pub fn all_features(&mut self) -> &mut Self {
+        self.features.baseline = FeatureBaseline::All;
+        self
+    }
+
+    /// Disables a feature, as `--disable-{feature}` does.
     pub fn disable_feature(&mut self, feature: Feature) -> &mut Self {
         self.features.disabled.insert(feature);
         self

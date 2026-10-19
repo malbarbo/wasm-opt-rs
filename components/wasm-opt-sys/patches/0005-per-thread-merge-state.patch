@@ -1,0 +1,62 @@
+Keep wasm-merge's state per thread, and let an embedder own the module.
+
+`wasm-merge.cpp` merges into a `Module` at file scope, and keeps the start
+functions, the export mode and the origin of each export beside it. A command
+line tool merges once per process, so there that is safe. An embedder merges
+into a module it read itself, and may merge two pairs on two threads at once --
+a test harness does.
+
+Make `merged` a pointer per thread, which `main` points at a module of its own
+and the bridge at the caller's, and make the other three `thread_local`. A
+call sets every one of them before it reads it.
+
+--- a/src/tools/wasm-merge.cpp
++++ b/src/tools/wasm-merge.cpp
+@@ -115,12 +115,16 @@
+ 
+ // The module we'll merge into. This is a singleton and it is simple to just
+ // have it as a global rather than pass it around all the time.
+-Module merged;
++//
++// A pointer per thread, so that an embedder can merge into a module it owns,
++// and two threads can merge at once. `main` points it at a module of its own.
++thread_local Module* mergedModule = nullptr;
++#define merged (*mergedModule)
+ 
+ // Everything we merge is accumulated into |merged|, aside from the start
+ // functions. To avoid incrementally adding a call each time, which can end up
+ // nested, we add them here and generate a series of flat calls at the end.
+-std::vector<Name> startFunctions;
++thread_local std::vector<Name> startFunctions;
+ 
+ // Name conflicts on functions etc. are resolved by renaming things in a way
+ // that only matters internally. Conflicting export names, however, are
+@@ -142,7 +146,8 @@
+   // modules are libraries of code that only provide things to the main module
+   // but not to the outside.
+   SkipExportConflicts,
+-} exportMergeMode = ErrorOnExportConflicts;
++};
++thread_local ExportMergeMode exportMergeMode = ErrorOnExportConflicts;
+ 
+ // Merging two modules is mostly straightforward: copy the functions etc. of the
+ // first module into the second, with some renaming to avoid name collisions.
+@@ -173,7 +178,7 @@
+   // original name.
+   Name baseName;
+ };
+-std::unordered_map<Export*, ExportInfo> exportModuleMap;
++thread_local std::unordered_map<Export*, ExportInfo> exportModuleMap;
+ 
+ // A map of [kind of thing in the module] to [old name => new name] for things
+ // of that kind. For example, the NameUpdates for functions is a map of old
+@@ -656,6 +661,9 @@
+ } // anonymous namespace
+ 
+ int main(int argc, const char* argv[]) {
++  Module mainMerged;
++  mergedModule = &mainMerged;
++
+   std::vector<std::string> inputFiles;
+   std::vector<std::string> inputFileNames;
+   bool emitBinary = true;

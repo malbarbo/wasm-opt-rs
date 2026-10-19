@@ -168,6 +168,9 @@ pub use run::OptimizationError;
 // The `wasm-ctor-eval` API.
 pub use ctor_eval::{CtorEvalError, CtorEvalOptions, CtorEvalOutcome};
 
+// The `wasm-merge` API.
+pub use merge::{ExportConflicts, MergeError, MergeOptions};
+
 // Easy integration with tools that already use `wasm-opt` via CLI.
 pub mod integration;
 
@@ -203,6 +206,10 @@ mod run;
 // `CtorEvalOptions` and the `run` method that re-implements the logic
 // from `wasm-ctor-eval.cpp` on top of it.
 mod ctor_eval;
+
+// `MergeOptions` and the `run` method that re-implements `wasm-merge.cpp`'s
+// `main` over the merge it bridges to.
+mod merge;
 
 // A thin wrapper around `std::process::Command` that provides the unstable
 // `get_args` method.

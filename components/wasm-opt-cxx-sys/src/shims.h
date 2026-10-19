@@ -44,6 +44,12 @@ namespace wasm_opt_rs {
                       bool quiet,
                       uint32_t maxSteps,
                       std::string& stoppedAt);
+
+  void mergeBegin(wasm::Module& wasm, const std::string& name, uint8_t mode);
+
+  void mergeAdd(wasm::Module& input, const std::string& name);
+
+  void mergeEnd(bool validate, bool restrict, const std::string& exports);
 }
 
 namespace wasm_shims {
@@ -82,6 +88,24 @@ namespace wasm_shims {
                       std::string& stoppedAt) {
     return wasm_opt_rs::ctorEvalRun(
       wasm, ctors, keptExports, ignoreExternalInput, quiet, maxSteps, stoppedAt);
+  }
+
+  // `wasm-merge`, a module at a time. `mergeBegin` names the module the rest
+  // are merged into, which must outlive `mergeEnd`; `mode` is 0 to fail on an
+  // export name the merged module has already, 1 to rename the later one and
+  // 2 to drop it.
+  void mergeBegin(wasm::Module& wasm, std::string& name, uint8_t mode) {
+    wasm_opt_rs::mergeBegin(wasm, name, mode);
+  }
+
+  void mergeAdd(wasm::Module& input, std::string& name) {
+    wasm_opt_rs::mergeAdd(input, name);
+  }
+
+  // With `restrict`, the merged module exports the names in `exports`, a
+  // comma-separated list, and nothing else.
+  void mergeEnd(bool validate, bool restrict, std::string& exports) {
+    wasm_opt_rs::mergeEnd(validate, restrict, exports);
   }
 }
 
