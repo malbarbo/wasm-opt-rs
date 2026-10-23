@@ -36,7 +36,8 @@ fn a_conflicting_export_fails_by_default() {
     let e = r.unwrap_err();
     assert!(
         matches!(e.downcast_ref(), Some(MergeError::Merge { .. })),
-        "{:?}", e
+        "{:?}",
+        e
     );
 }
 
@@ -54,8 +55,7 @@ fn merges_on_several_threads_do_not_share_state() {
             std::thread::spawn(|| {
                 for _ in 0..20 {
                     let out =
-                        merge(MergeOptions::new().export_conflicts(ExportConflicts::Skip))
-                            .unwrap();
+                        merge(MergeOptions::new().export_conflicts(ExportConflicts::Skip)).unwrap();
                     assert!(!out.contains("(import"), "{}", out);
                 }
             })

@@ -74,6 +74,15 @@
   and nothing reads are dropped as it is put back. The written module is the
   same. On a module whose start function builds 87 000 objects, 284 ctors take
   nine minutes where the first 56 used to take 20.
+- Added `CtorEvalOptions::keep_going`, which passes over a ctor that cannot be
+  evaluated and goes on with the next, where the tool stops; the outcome names
+  the ones passed over, as `CtorEvalOutcome::Skipped`. Each is left in the
+  module as it would be had evaluation stopped there. It also applies the
+  evaluated state to the module once for all the ctors between two failures
+  rather than once per ctor, which is most of the time and memory a call takes
+  when the start function builds a large heap: on one that builds 87 000
+  objects, 284 ctors take 11 s and 6 GB where they took nine minutes and
+  31 GB, and with 12 failing ctors among them one call takes 27 s.
 
 ## 0.116.1
 

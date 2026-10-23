@@ -67,10 +67,20 @@ pub enum CtorEvalError {
 pub enum CtorEvalOutcome {
     /// Every ctor was evaluated.
     Finished,
+    /// Every ctor was tried, under [`CtorEvalOptions::keep_going`], and these
+    /// could not be evaluated. Each is left in the module with whatever of it
+    /// was evaluated, as it would be had evaluation stopped there, and the
+    /// others were evaluated.
+    Skipped(Vec<String>),
     /// Evaluation stopped at this ctor, which is left in the module with
     /// whatever of it was evaluated. The ctors before it were evaluated, and
     /// the ones after it were not tried, so setting this one aside and running
     /// again is how to get further.
+    ///
+    /// Under [`CtorEvalOptions::keep_going`], only running out of
+    /// [`CtorEvalOptions::max_steps`] stops evaluation, and the ctors passed
+    /// over before it are left as [`CtorEvalOutcome::Skipped`] says, but not
+    /// named.
     StoppedAt(String),
     /// Nothing was evaluated, and no ctor is named as the reason: the module
     /// holds a `data.drop`, or it could not be instantiated -- its start
@@ -114,7 +124,7 @@ pub struct CtorEvalOptions {
     /// This corresponds to the `--ctors` argument to `wasm-ctor-eval`.
     ///
     /// Evaluation stops at the first one that cannot be evaluated; the
-    /// remaining ctors are left alone.
+    /// remaining ctors are left alone. See [`CtorEvalOptions::keep_going`].
     pub ctors: Vec<String>,
     /// The ctors whose exports are kept even after they are evaluated.
     ///
@@ -160,6 +170,26 @@ pub struct CtorEvalOptions {
     ///
     /// Default: `0`, which is no limit.
     pub max_steps: u32,
+    /// Pass over a ctor that cannot be evaluated and go on with the next,
+    /// rather than stop there.
+    ///
+    /// This has no counterpart in `wasm-ctor-eval`, where the way past a
+    /// failing ctor is to run the tool again without it. Here the failing
+    /// ctor is evaluated again from the state before it, on a new instance of
+    /// the module, and keeps whatever of it can be evaluated; the outcome
+    /// names it in [`CtorEvalOutcome::Skipped`].
+    ///
+    /// It also changes how often the evaluated state is written into the
+    /// module, which serializes the whole heap: once for all the ctors
+    /// evaluated between two failures, rather than once per ctor. On a module
+    /// whose start function builds a large heap, that is most of the time and
+    /// memory a call takes. A ctor whose export is kept is evaluated as
+    /// without this.
+    ///
+    /// Running out of [`CtorEvalOptions::max_steps`] still stops evaluation.
+    ///
+    /// Default: `false`.
+    pub keep_going: bool,
 }
 
 impl CtorEvalOptions {
@@ -177,6 +207,7 @@ impl CtorEvalOptions {
             debug_info: false,
             quiet: true,
             max_steps: 0,
+            keep_going: false,
         }
     }
 }
@@ -236,20 +267,22 @@ impl CtorEvalOptions {
             let ctors = self.ctors.join(",");
             let kept_exports = self.kept_exports.join(",");
 
-            let end = ctor_eval_run(
+            let (end, skipped) = ctor_eval_run(
                 &mut m,
                 &ctors,
                 &kept_exports,
                 self.ignore_external_input,
                 self.quiet,
                 self.max_steps,
+                self.keep_going,
             )
             .map_err(|e| CtorEvalError::Eval {
                 source: Box::from(e),
             })?;
 
             let outcome = match end {
-                CtorEvalEnd::Finished => CtorEvalOutcome::Finished,
+                CtorEvalEnd::Finished if skipped.is_empty() => CtorEvalOutcome::Finished,
+                CtorEvalEnd::Finished => CtorEvalOutcome::Skipped(skipped),
                 CtorEvalEnd::StoppedAt(ctor) => CtorEvalOutcome::StoppedAt(ctor),
                 CtorEvalEnd::NotInstantiated => CtorEvalOutcome::NothingEvaluated,
                 CtorEvalEnd::InvalidState => {

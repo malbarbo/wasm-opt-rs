@@ -43,7 +43,9 @@ namespace wasm_opt_rs {
                       bool ignoreExternalInput,
                       bool quiet,
                       uint32_t maxSteps,
-                      std::string& stoppedAt);
+                      bool keepGoing,
+                      std::string& stoppedAt,
+                      std::string& skipped);
 
   void mergeBegin(wasm::Module& wasm, const std::string& name, uint8_t mode);
 
@@ -75,19 +77,29 @@ namespace wasm_shims {
     return wasm_opt_rs::ctorEvalCanEval(wasm);
   }
 
-  // Returns 0 when every ctor was evalled; 1 when evalling stopped, at the ctor
-  // written to `stoppedAt` or, when that is empty, before trying any; and 2 when
-  // it left the module in a state that cannot be written out, in which case the
-  // caller must discard it.
+  // Returns 0 when every ctor was evalled or, under `keepGoing`, tried; 1 when
+  // evalling stopped, at the ctor written to `stoppedAt` or, when that is empty,
+  // before trying any; and 2 when it left the module in a state that cannot be
+  // written out, in which case the caller must discard it. The ctors passed
+  // over are written to `skipped`, each ending in a newline.
   uint8_t ctorEvalRun(wasm::Module& wasm,
                       std::string& ctors,
                       std::string& keptExports,
                       bool ignoreExternalInput,
                       bool quiet,
                       uint32_t maxSteps,
-                      std::string& stoppedAt) {
-    return wasm_opt_rs::ctorEvalRun(
-      wasm, ctors, keptExports, ignoreExternalInput, quiet, maxSteps, stoppedAt);
+                      bool keepGoing,
+                      std::string& stoppedAt,
+                      std::string& skipped) {
+    return wasm_opt_rs::ctorEvalRun(wasm,
+                                    ctors,
+                                    keptExports,
+                                    ignoreExternalInput,
+                                    quiet,
+                                    maxSteps,
+                                    keepGoing,
+                                    stoppedAt,
+                                    skipped);
   }
 
   // `wasm-merge`, a module at a time. `mergeBegin` names the module the rest

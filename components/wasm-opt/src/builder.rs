@@ -236,6 +236,12 @@ impl CtorEvalOptions {
         self
     }
 
+    /// Sets [`CtorEvalOptions::keep_going`].
+    pub fn keep_going(&mut self, value: bool) -> &mut Self {
+        self.keep_going = value;
+        self
+    }
+
     /// Sets the baseline feature set to [`FeatureBaseline::MvpOnly`].
     pub fn mvp_features_only(&mut self) -> &mut Self {
         self.features.baseline = FeatureBaseline::MvpOnly;

@@ -8,6 +8,7 @@ static CTOR_EVAL_UNFLATTENED_WAT: &str = "tests/ctor_eval_unflattened.wat";
 static CTOR_EVAL_LOOP_WAT: &str = "tests/ctor_eval_loop.wat";
 static CTOR_EVAL_DATA_DROP_WAT: &str = "tests/ctor_eval_data_drop.wat";
 static CTOR_EVAL_START_WAT: &str = "tests/ctor_eval_start.wat";
+static CTOR_EVAL_KEEP_GOING_WAT: &str = "tests/ctor_eval_keep_going.wat";
 
 fn eval_file(
     options: &mut CtorEvalOptions,
@@ -240,6 +241,72 @@ fn a_start_function_that_cannot_be_evalled_stops_before_any_ctor() -> anyhow::Re
     // `test1` is a store that is safe to eval, and it was not tried.
     assert!(out.contains(r#"(export "test1""#), "{}", out);
     assert!(out.contains(r#""waka waka""#), "{}", out);
+
+    Ok(())
+}
+
+/// Under `keep_going` a ctor that fails is passed over, and the ctors after it
+/// are evaluated from the state it would have left had evaluation stopped
+/// there: with the part of it that evaluated, and none of the part that did
+/// not.
+#[test]
+fn keep_going_passes_over_a_ctor_that_fails() -> anyhow::Result<()> {
+    let (outcome, out) = eval_file(
+        CtorEvalOptions::new()
+            .all_features()
+            .add_ctor("a")
+            .add_ctor("fail")
+            .add_ctor("b")
+            .keep_going(true),
+        CTOR_EVAL_KEEP_GOING_WAT,
+    )?;
+
+    assert_eq!(outcome, CtorEvalOutcome::Skipped(vec!["fail".to_string()]));
+
+    // `a` and `b` were evaluated, and their exports removed.
+    assert!(!out.contains(r#"(export "a""#), "{}", out);
+    assert!(!out.contains(r#"(export "b""#), "{}", out);
+
+    // `fail` keeps its export, for the part of it that was not evaluated.
+    assert!(out.contains(r#"(export "fail""#), "{}", out);
+
+    // Its first item was, and `b` read it; its second set `$z` before failing,
+    // which neither the module nor `b` saw.
+    assert!(
+        out.contains("(global $x (mut i32) (i32.const 100))"),
+        "{}",
+        out
+    );
+    assert!(
+        out.contains("(global $y (mut i32) (i32.const 101))"),
+        "{}",
+        out
+    );
+
+    // `b` read the object `a` allocated, across the new instance.
+    assert!(
+        out.contains("(global $w (mut i32) (i32.const 42))"),
+        "{}",
+        out
+    );
+
+    Ok(())
+}
+
+/// Without `keep_going` the same ctors stop at the one that fails.
+#[test]
+fn without_keep_going_a_failing_ctor_stops_evaluation() -> anyhow::Result<()> {
+    let (outcome, out) = eval_file(
+        CtorEvalOptions::new()
+            .all_features()
+            .add_ctor("a")
+            .add_ctor("fail")
+            .add_ctor("b"),
+        CTOR_EVAL_KEEP_GOING_WAT,
+    )?;
+
+    assert_eq!(outcome, CtorEvalOutcome::StoppedAt("fail".to_string()));
+    assert!(out.contains(r#"(export "b""#), "{}", out);
 
     Ok(())
 }

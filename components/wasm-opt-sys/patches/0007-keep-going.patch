@@ -1,0 +1,270 @@
+Pass over a ctor that cannot be evalled, when asked to.
+
+`evalCtors` stops at the first ctor it cannot eval, and that is the only safe
+thing it can do: what the ctor did before failing is on the instance, and
+nothing rolls an instance back. An embedder with many independent ctors -- a
+class initializer each, say -- has to set the failing one aside and run the
+whole tool again, parsing and instantiating the module once per failure.
+
+But the module changes only when state is applied to it, so a new instance of
+the module is the state from before the failure. With `keepGoing`, a failing
+ctor is evalled again on a new instance, applying as it goes so that whatever
+part of it evals is kept, as it would be had evalling stopped there; then it
+is passed over, named in `skipped`, and evalling goes on with the next one on
+yet another instance.
+
+Applying state is also what costs: it serializes the whole live heap. Every
+application allocates a defining global per object, and their expressions stay
+in the module's arena whether the globals are kept or not, so an application
+per ctor costs memory in proportion to the heap times the ctors. Under
+`keepGoing` the state is applied once for as many ctors as evalled since the
+last failure, and after a failure those are evalled again on the new instance,
+which gives the same state, being the same code from the same state. A ctor
+whose export is kept is evalled as before, applying as it goes, because only
+an application can serialize its result.
+
+The step limit stays one over the whole call: the new instance carries the
+count of the old, and the ctors evalled again run unbounded, being known to
+finish. A ctor that runs the limit out still ends evalling, as before, since
+every ctor after it would too.
+
+Without `keepGoing` nothing is evalled differently.
+
+On a module whose start function builds 87 000 objects, 284 ctors that all
+eval took nine minutes and 31 GB in one call; under `keepGoing` they take 11 s
+and 6 GB. With the 12 that fail among them, one call takes 27 s, where it took
+a call per failure. The module written is the one the calls without it wrote,
+up to the order of globals and which edge of a cycle in the heap is broken.
+
+--- a/src/wasm-interpreter.h
++++ b/src/wasm-interpreter.h
+@@ -610,6 +610,11 @@
+   // would have to be threaded through every subclass down to ModuleRunner.
+   void setMaxSteps(Index value) { maxSteps = value; }
+ 
++  // The instructions executed so far, for a caller that replaces this runner
++  // with another and wants the bound to stay one over both.
++  Index getSteps() const { return steps; }
++  void setSteps(Index value) { steps = value; }
++
+   Flow visit(Expression* curr) {
+ #if WASM_INTERPRETER_DEBUG
+     std::cout << indent() << "visit(" << getExpressionName(curr) << ")\n";
+--- a/src/tools/wasm-ctor-eval.cpp
++++ b/src/tools/wasm-ctor-eval.cpp
+@@ -313,6 +313,10 @@
+ // over -- see hostLimit() below -- rather than the process.
+ static thread_local Index maxSteps = 0;
+ 
++// Whether a ctor that cannot be evalled is passed over, rather than ending the
++// evalling there. See evalCtors().
++static thread_local bool keepGoing = false;
++
+ struct CtorEvalExternalInterface : EvallingModuleRunner::ExternalInterface {
+   Module* wasm;
+   EvallingModuleRunner* instance;
+@@ -1157,10 +1161,16 @@
+ // evaluate the ctor (which means that the caller can proceed to try to eval
+ // further ctors if there are any), and if we did, the results if the function
+ // returns any.
++//
++// When |deferred|, nothing is serialized or applied to the module, not even
++// the part of a ctor that evalled before it failed: the caller applies the
++// state once evalling has gone further, and on a failure starts over from the
++// module.
+ EvalCtorOutcome evalCtor(EvallingModuleRunner& instance,
+                          CtorEvalExternalInterface& interface,
+                          Name funcName,
+-                         Name exportName) {
++                         Name exportName,
++                         bool deferred = false) {
+   auto& wasm = instance.wasm;
+   auto* func = wasm.getFunction(funcName);
+   if (func->imported()) {
+@@ -1281,6 +1291,27 @@
+         break;
+       }
+ 
++      if (deferred) {
++        if (flow.breakTo == RETURN_CALL_FLOW) {
++          func = wasm.getFunction(flow.values.back().getFunc());
++          flow.values.pop_back();
++          params = std::move(flow.values);
++          if (func->imported()) {
++            // Calling an import is where evalling stops; see below for what
++            // the module is then left with.
++            return EvalCtorOutcome();
++          }
++          goto start_eval;
++        }
++        successes++;
++        results = flow.values;
++        if (flow.breaking()) {
++          successes = block->list.size();
++          break;
++        }
++        continue;
++      }
++
+       // We are about to serialize content (the code paths below call
+       // getSerialization). Clear the state.
+       interface.clearApplyState();
+@@ -1367,7 +1398,7 @@
+     // precomputed values for the current return-called function, then we can
+     // replace the export with a new function that does less work than the
+     // original.
+-    if ((func->imported() || successes < block->list.size()) &&
++    if (!deferred && (func->imported() || successes < block->list.size()) &&
+         (successes > 0 || func->name != funcName ||
+          (localExprs.size() && func->getParams() != Type::none))) {
+       auto originalFuncType = wasm.getFunction(funcName)->type;
+@@ -1475,6 +1506,10 @@
+ static thread_local bool stopped = false;
+ static thread_local std::string stoppedAt;
+ 
++// The ctors the last evalCtors() passed over, under keepGoing, in order. Each
++// is left in the module as it would be had evalling stopped there.
++static thread_local std::vector<std::string> skipped;
++
+ // Eval all ctors in a module.
+ void evalCtors(Module& wasm,
+                std::vector<std::string>& ctors,
+@@ -1494,16 +1529,58 @@
+   CtorEvalExternalInterface interface(linkedInstances);
+   stopped = false;
+   stoppedAt.clear();
++  skipped.clear();
+   // The ctor being tried, so that the catches below, which are outside
+   // evalCtor(), can still name it.
+   std::string trying;
+   try {
+     // create an instance for evalling
+-    EvallingModuleRunner instance(
++    auto instance = std::make_unique<EvallingModuleRunner>(
+       wasm, &interface, interface.instanceInitialized, linkedInstances);
+-    instance.setMaxSteps(maxSteps);
+-    instance.instantiate();
++    instance->setMaxSteps(maxSteps);
++    instance->instantiate();
+     interface.instanceInitialized = true;
++
++    // Under keepGoing, a ctor that fails is passed over. What it did before
++    // failing is on the instance, which nothing can roll back, but the module
++    // changes only when state is applied to it, so a new instance of the module
++    // is the state from before. Applying state is also what costs: it
++    // serializes the whole heap. So the state is applied once for as many
++    // ctors as evalled since the last failure -- these, each with the function
++    // it ran, whose exports go once the state they left is in the module --
++    // and after a failure they are evalled again on the new instance, which
++    // gives the same state, being the same code from the same state.
++    std::vector<std::pair<Name, std::string>> pending;
++    auto apply = [&]() {
++      interface.clearApplyState();
++      interface.applyToModule();
++      for (auto& [_, ctor] : pending) {
++        wasm.removeExport(ctor);
++      }
++      pending.clear();
++    };
++    auto reinstantiate = [&]() {
++      // The step bound stays one over the whole call, but the ctors evalled
++      // again are known to finish, so they run unbounded.
++      auto steps = instance->getSteps();
++      instance.reset();
++      interface.instanceInitialized = false;
++      instance = std::make_unique<EvallingModuleRunner>(
++        wasm, &interface, interface.instanceInitialized, linkedInstances);
++      instance->instantiate();
++      interface.instanceInitialized = true;
++      auto wasTrying = trying;
++      for (auto& [func, ctor] : pending) {
++        trying = ctor;
++        if (!evalCtor(*instance, interface, func, ctor, true)) {
++          Fatal() << "ctor " << ctor << " evalled once but not again";
++        }
++      }
++      trying = wasTrying;
++      instance->setSteps(steps);
++      instance->setMaxSteps(maxSteps);
++    };
++
+     // go one by one, in order, until we fail
+     // TODO: if we knew priorities, we could reorder?
+     for (auto& ctor : ctors) {
+@@ -1537,17 +1614,50 @@
+       // needing to serialize.
+       bool keeping = keptExportsSet.contains(ctor);
+       if (!keeping) {
+-        instance.allowContNew = true;
++        instance->allowContNew = true;
+       } else {
+         // Any reference type might refer to a continuation (indirectly, that
+         // is, it might refer to something with a continuation field), so
+         // disallow refs too.
+         auto features = func->getResults().getFeatures();
+-        instance.allowContNew =
++        instance->allowContNew =
+           !features.hasStackSwitching() && !features.hasReferenceTypes();
+       }
+ 
+-      auto outcome = evalCtor(instance, interface, func->name, ctor);
++      // A kept export's result is serialized into the module, which only an
++      // application of state does, so that ctor is evalled the way every ctor
++      // is without keepGoing, applying as it goes.
++      bool deferred = keepGoing && !keeping;
++      if (!deferred && !pending.empty()) {
++        apply();
++      }
++      auto outcome = evalCtor(*instance, interface, func->name, ctor, deferred);
++      if (!outcome && keepGoing) {
++        bool exhausted =
++          maxSteps != EvallingModuleRunner::NO_LIMIT &&
++          instance->getSteps() > maxSteps;
++        if (deferred) {
++          reinstantiate();
++          if (!pending.empty()) {
++            apply();
++          }
++          if (!exhausted) {
++            // Again, applying as it goes, so that the part of it that evals is
++            // kept, as it is without keepGoing.
++            outcome = evalCtor(*instance, interface, func->name, ctor);
++            deferred = false;
++          }
++        }
++        if (!outcome && !exhausted) {
++          if (!quiet) {
++            std::cout << "  ...skipping\n";
++          }
++          skipped.push_back(ctor);
++          reinstantiate();
++          trying.clear();
++          continue;
++        }
++      }
+       if (!outcome) {
+         if (!quiet) {
+           std::cout << "  ...stopping\n";
+@@ -1562,6 +1672,12 @@
+         std::cout << "  ...success on " << ctor << ".\n";
+       }
+ 
++      if (deferred) {
++        pending.emplace_back(func->name, ctor);
++        trying.clear();
++        continue;
++      }
++
+       // Remove the export if we should.
+       auto* exp = wasm.getExport(ctor);
+       if (!keeping) {
+@@ -1585,6 +1701,9 @@
+       }
+       trying.clear();
+     }
++    if (!pending.empty()) {
++      apply();
++    }
+   } catch (FailToEvalException& fail) {
+     // That's it, we failed to even create the instance.
+     if (!quiet) {

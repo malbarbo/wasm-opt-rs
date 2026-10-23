@@ -292,23 +292,27 @@ namespace wasm_opt_rs {
 
 bool ctorEvalCanEval(wasm::Module& wasm) { return canEval(wasm); }
 
-// How evalling ended: 0 when every ctor was evalled; 1 when it stopped, at the
-// ctor written to `stoppedAtOut` or, when that is empty, before trying any; and
-// 2 when it left the module in a state that cannot be written out, which the
-// caller must then discard.
+// How evalling ended: 0 when every ctor was evalled or, under `keepGoingArg`,
+// tried; 1 when it stopped, at the ctor written to `stoppedAtOut` or, when that
+// is empty, before trying any; and 2 when it left the module in a state that
+// cannot be written out, which the caller must then discard. The ctors passed
+// over are written to `skippedOut`, each ending in a newline.
 uint8_t ctorEvalRun(wasm::Module& wasm,
                     const std::string& ctors,
                     const std::string& keptExports,
                     bool ignoreExternalInputArg,
                     bool quietArg,
                     uint32_t maxStepsArg,
-                    std::string& stoppedAtOut) {
+                    bool keepGoingArg,
+                    std::string& stoppedAtOut,
+                    std::string& skippedOut) {
   // These are statics of this translation unit, and `main` only ever sets
   // them. Assign all of them so that a call cannot observe the state left
   // behind by a previous one.
   ignoreExternalInput = ignoreExternalInputArg;
   quiet = quietArg;
   maxSteps = maxStepsArg;
+  keepGoing = keepGoingArg;
   invalidState = false;
 
   // `wasm-ctor-eval` splits these the same way, so that a name containing a
@@ -328,6 +332,10 @@ uint8_t ctorEvalRun(wasm::Module& wasm,
     return 2;
   }
   stoppedAtOut = stoppedAt;
+  for (auto& ctor : skipped) {
+    skippedOut += ctor;
+    skippedOut += '\n';
+  }
   return stopped ? 1 : 0;
 }
 

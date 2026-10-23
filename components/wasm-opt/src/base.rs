@@ -428,7 +428,7 @@ pub fn ctor_eval_can_eval(wasm: &mut Module) -> bool {
 
 /// How [`ctor_eval_run`] ended.
 pub enum CtorEvalEnd {
-    /// Every ctor was evaluated.
+    /// Every ctor was evaluated or, under `keep_going`, tried.
     Finished,
     /// Evaluation stopped at this ctor. The ones before it were evaluated, and
     /// the ones after it were not tried.
@@ -442,12 +442,15 @@ pub enum CtorEvalEnd {
     InvalidState,
 }
 
-/// Evaluates `ctors`, in order, until one of them cannot be evaluated.
+/// Evaluates `ctors`, in order, until one of them cannot be evaluated or,
+/// under `keep_going`, passing over the ones that cannot, which are returned
+/// beside how evaluation ended.
 ///
 /// `ctors` and `kept_exports` are comma-separated lists of export names.
 ///
 /// `max_steps` bounds the instructions the whole call may execute, or is zero
-/// for no bound. A ctor that runs over it fails, as one reading an import does.
+/// for no bound. A ctor that runs over it fails, as one reading an import does,
+/// and ends evaluation even under `keep_going`.
 pub fn ctor_eval_run(
     wasm: &mut Module,
     ctors: &str,
@@ -455,10 +458,12 @@ pub fn ctor_eval_run(
     ignore_external_input: bool,
     quiet: bool,
     max_steps: u32,
-) -> Result<CtorEvalEnd, cxx::Exception> {
+    keep_going: bool,
+) -> Result<(CtorEvalEnd, Vec<String>), cxx::Exception> {
     let_cxx_string!(ctors = ctors);
     let_cxx_string!(kept_exports = kept_exports);
     let_cxx_string!(stopped_at = "");
+    let_cxx_string!(skipped = "");
 
     let end = wasm::ctorEvalRun(
         wasm.0.pin_mut(),
@@ -467,16 +472,24 @@ pub fn ctor_eval_run(
         ignore_external_input,
         quiet,
         max_steps,
+        keep_going,
         stopped_at.as_mut(),
+        skipped.as_mut(),
     )?;
 
-    Ok(match end {
+    let end = match end {
         0 => CtorEvalEnd::Finished,
         1 if stopped_at.is_empty() => CtorEvalEnd::NotInstantiated,
         1 => CtorEvalEnd::StoppedAt(stopped_at.to_string_lossy().into_owned()),
         2 => CtorEvalEnd::InvalidState,
         _ => unreachable!("ctorEvalRun returned {}", end),
-    })
+    };
+    let skipped = skipped
+        .to_string_lossy()
+        .lines()
+        .map(String::from)
+        .collect();
+    Ok((end, skipped))
 }
 
 /// Starts a `wasm-merge` into `wasm`, which the modules [`merge_add`] is given
