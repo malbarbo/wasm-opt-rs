@@ -1,0 +1,122 @@
+Drop the defining globals the previous application of state allocated.
+
+Every application of state to the module serializes the live GC data afresh:
+`clearApplyState()` forgets which global defines which object, so each object
+gets a new defining global, and the ones the previous application allocated
+stay in the module. Nothing serialized from then on reads them, and the final
+`remove-unused-module-elements` drops them, so the written module is the same;
+but until then `applyGlobalsToModule()` scans, sorts and fixes them up on
+every application, and every application adds as many again. The cost of an
+application grows with the number before it, and the ctors evalled in one
+call cost the square of their number.
+
+That is invisible with LLVM's ctors, a handful over a small heap. A module
+whose start function builds a heap of 87 000 objects, and which has 284 ctors
+to eval, grows by 87 000 globals per application: the 56th ctor took 33 s
+where it takes 2 s alone, and the whole call would have taken six hours.
+With this the ctors take 1.3 to 2.5 s each and all 284 take nine minutes.
+
+So put back only the defining globals code outside the globals reads -- the
+locals a partially evalled ctor resumes with, and the results of a ctor that
+kept its export -- and the ones their inits read in turn. Everything else the
+previous application allocated is dropped where it is put back.
+
+--- a/src/tools/wasm-ctor-eval.cpp
++++ b/src/tools/wasm-ctor-eval.cpp
+@@ -328,6 +328,17 @@
+   // not yet been re-added are a blind spot for it).
+   std::unordered_set<Name> usedGlobalNames;
+ 
++  // The defining globals getSerialization() allocated. Every application of
++  // state serializes the live GC data afresh -- clearApplyState() forgets the
++  // defining globals -- so the ones the previous application allocated are
++  // dead by the next, unless code outside the globals reads them; see
++  // applyGlobalsToModule().
++  std::unordered_set<Name> allocatedGlobals;
++
++  // The globals code outside the globals reads: the locals a partially evalled
++  // ctor resumes with, and the results a ctor that kept its export returns.
++  std::unordered_set<Name> pinnedGlobals;
++
+   // Set to true after we create the instance.
+   bool instanceInitialized = false;
+ 
+@@ -562,6 +573,14 @@
+   }
+ 
+ public:
++  // Keep the defining globals `expr` reads, and the ones their inits read,
++  // through every later application of state.
++  void pin(Expression* expr) {
++    for (auto* get : FindAll<GlobalGet>(expr).list) {
++      pinnedGlobals.insert(get->name);
++    }
++  }
++
+   // Clear the state of the operation of applying the interpreter's runtime
+   // information into the module. This must be done before we start to serialize
+   // content (as the serialization uses this state - defining globals must be
+@@ -631,11 +650,39 @@
+     // refes to GC data, then we will allocate a defining global for that data,
+     // and refer to it. Put another way, we place the existing globals back into
+     // the module one at a time, adding their dependencies as we go.
++    //
++    // The defining globals the previous application allocated are not put
++    // back, unless pinned: nothing serialized from here on reads them, and
++    // left in the module they are scanned, sorted and fixed up below on every
++    // later application, each of which adds as many again -- the cost of an
++    // application grew with the number of applications before it, and the
++    // ctors evalled in one call cost the square of their number. The final
++    // remove-unused-module-elements would have dropped them anyway.
++    std::unordered_set<Name> kept;
++    std::vector<Name> work(pinnedGlobals.begin(), pinnedGlobals.end());
++    while (!work.empty()) {
++      auto name = work.back();
++      work.pop_back();
++      if (!allocatedGlobals.count(name) || !kept.insert(name).second) {
++        continue;
++      }
++      if (auto* global = wasm->getGlobalOrNull(name); global && global->init) {
++        for (auto* get : FindAll<GlobalGet>(global->init).list) {
++          work.push_back(get->name);
++        }
++      }
++    }
++
+     auto oldGlobals = std::move(wasm->globals);
+     // After clearing the globals vector, clear the map as well.
+     wasm->updateMaps();
+ 
+     for (auto& oldGlobal : oldGlobals) {
++      if (allocatedGlobals.count(oldGlobal->name) &&
++          !kept.count(oldGlobal->name)) {
++        allocatedGlobals.erase(oldGlobal->name);
++        continue;
++      }
+       if (oldGlobal->imported()) {
+         wasm->addGlobal(std::move(oldGlobal));
+         continue;
+@@ -952,6 +999,7 @@
+         definingGlobalName =
+           Names::getValidNameGivenExisting("ctor-eval$global", usedGlobalNames);
+         usedGlobalNames.insert(definingGlobalName);
++        allocatedGlobals.insert(definingGlobalName);
+         definingGlobals[data] = DefiningGlobalInfo{definingGlobalName, type};
+       }
+ 
+@@ -1391,6 +1439,7 @@
+       // Create and add the new function.
+       auto* copyFunc = wasm.addFunction(builder.makeFunction(
+         copyName, originalFuncType, std::move(localTypes), copyBody));
++      interface.pin(copyBody);
+ 
+       // Interesting optimizations may be possible both due to removing some but
+       // not all of the code, and due to the locals we just added.
+@@ -1529,6 +1578,7 @@
+           copyFunc->body = interface.getSerialization(*outcome);
+           // We have ruled out serialization problems earlier.
+           assert(copyFunc->body);
++          interface.pin(copyFunc->body);
+         }
+         wasm.addFunction(std::move(copyFunc));
+         *wasm.getExport(exp->name)->getInternalName() = copyName;

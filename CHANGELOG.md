@@ -66,6 +66,14 @@
   evaluation may execute. Binaryen's evaluator cannot time out, so without this
   a ctor that does not terminate does not either. Running over it fails that
   ctor, the way reading an import does.
+- Ctor evaluation no longer slows down with every ctor it evaluates. Each
+  application of the evaluated state to the module serialized the whole GC
+  heap into new globals and left the previous ones in place until the end, so
+  every application scanned all the ones before it: the ctors of one call cost
+  the square of their number. Now the globals the previous application made
+  and nothing reads are dropped as it is put back. The written module is the
+  same. On a module whose start function builds 87 000 objects, 284 ctors take
+  nine minutes where the first 56 used to take 20.
 
 ## 0.116.1
 
