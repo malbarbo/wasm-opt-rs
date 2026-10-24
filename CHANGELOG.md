@@ -106,6 +106,11 @@
   several memories is written back the same way, each memory on its own. A GC
   program merged with a C module, whose `_initialize` always stores, was
   evaluated not at all, and now is entirely.
+- A `data.drop` or an `elem.drop` that evaluation runs empties the passive
+  segment it drops, as the drop does; before, the segment was written back
+  whole. A module whose memory cannot be flattened is no longer refused for
+  holding a `data.drop`, so one this tool evaluated, whose start function
+  drops each fill's segment, can be evaluated again.
 - Fixed a ctor evaluated in part whose locals held an object: the global it was
   written to was dropped as soon as it was made, and the module could not be
   written.

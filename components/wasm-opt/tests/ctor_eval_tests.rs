@@ -204,25 +204,62 @@ fn the_step_limit_stops_a_ctor_that_does_not_end() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// A `data.drop` anywhere in a module whose memory will not flatten gives the
-/// whole module up, as every such module was given up before.
+/// A `data.drop` or an `elem.drop` a ctor runs empties the segment it drops, as
+/// a drop does, and one a ctor passed over under `keep_going` runs leaves its
+/// segment as it was. The interpreter records a drop on the instance, and not
+/// through the external interface.
 #[test]
-fn a_data_drop_is_still_refused() -> anyhow::Result<()> {
+fn a_dropped_segment_is_empty_and_a_skipped_drop_leaves_it() -> anyhow::Result<()> {
     let (outcome, out) = eval_file(
-        CtorEvalOptions::new().all_features().add_ctor("test1"),
+        CtorEvalOptions::new()
+            .all_features()
+            .add_ctor("test1")
+            .add_ctor("drop")
+            .add_ctor("fail")
+            .keep_going(true),
         CTOR_EVAL_DATA_DROP_WAT,
     )?;
 
-    assert_eq!(outcome, CtorEvalOutcome::NothingEvaluated);
+    assert_eq!(outcome, CtorEvalOutcome::Skipped(vec!["fail".to_string()]));
 
-    // `test1` does nothing a flat memory is needed for, and was still not
-    // evalled: the module was never entered.
-    assert!(out.contains(r#"(export "test1""#), "{}", out);
+    assert!(!out.contains(r#"(export "test1""#), "{}", out);
+    assert!(!out.contains(r#"(export "drop""#), "{}", out);
+    // 119 is "w".
     assert!(
-        out.contains("(global $read (mut i32) (i32.const 0))"),
+        out.contains("(global $read (mut i32) (i32.const 119))"),
         "{}",
         out
     );
+    assert!(out.contains(r#"(data $passive "")"#), "{}", out);
+    assert!(out.contains("(elem $elems func)"), "{}", out);
+    assert!(out.contains(r#"(data $kept "kept")"#), "{}", out);
+    assert!(out.contains("(elem $kept-elems func $read)"), "{}", out);
+
+    Ok(())
+}
+
+/// The fills of an evaluated module drop their segments in the start function,
+/// so a second evaluation of what the first wrote runs a `data.drop` before any
+/// ctor, and is not given up for it.
+#[test]
+fn an_evaluated_module_with_fills_is_evaluated_again() -> anyhow::Result<()> {
+    let temp_dir = Builder::new().prefix("wasm_ctor_eval_tests").tempdir()?;
+    let first = temp_dir.path().join("first.wasm");
+    let outcome = CtorEvalOptions::new()
+        .all_features()
+        .add_ctor("make")
+        .run(CTOR_EVAL_LONG_ARRAY_WAT, &first)?;
+    assert_eq!(outcome, CtorEvalOutcome::Finished);
+
+    let (outcome, out) = eval_file(
+        CtorEvalOptions::new().all_features().add_ctor("again"),
+        first.to_str().unwrap(),
+    )?;
+
+    assert_eq!(outcome, CtorEvalOutcome::Finished);
+    assert!(!out.contains(r#"(export "again""#), "{}", out);
+    // 200 + 7.
+    assert!(out.contains("(i32.const 207)"), "{}", out);
 
     Ok(())
 }

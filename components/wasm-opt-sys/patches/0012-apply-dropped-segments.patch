@@ -1,0 +1,101 @@
+Carry the segments execution dropped into the module.
+
+The interpreter records a `data.drop` and an `elem.drop` on the instance, and
+nothing of it reaches the external interface, so applying state never wrote a
+drop back: a ctor that dropped a passive segment left it whole, and code that
+copied out of it after evaluation read what a run would have trapped on. Patch
+0001 gave up on any module whose memory could not be flattened if it held a
+`data.drop` anywhere, and that took in the start function patches 0008 and
+0009 write, which drops each fill's segment: a module this tool had evaluated
+could not be evaluated again.
+
+A dropped segment is an empty one. Each application of state now empties every
+passive segment the instance has dropped, data and element alike, and the
+refusal goes. An active segment was dropped by instantiation and stays, and so
+does a fill's segment, whose drop is in the start function this tool writes
+and runs again in every instance after the first.
+
+diff -ru a/src/tools/wasm-ctor-eval.cpp b/src/tools/wasm-ctor-eval.cpp
+--- a/src/tools/wasm-ctor-eval.cpp	2026-10-24 10:35:13.031951359 -0300
++++ b/src/tools/wasm-ctor-eval.cpp	2026-10-24 10:36:33.788747603 -0300
+@@ -402,6 +402,7 @@
+     }
+ 
+     applyGlobalsToModule();
++    applyDropsToModule();
+   }
+ 
+   void init(Module& wasm_, EvallingModuleRunner& instance_) override {
+@@ -629,6 +630,32 @@
+   }
+ 
+ private:
++  // A drop is the one effect on the module that the interpreter records on the
++  // instance rather than through this interface. A dropped segment is an empty
++  // one, so each passive segment execution dropped is emptied: nothing but
++  // nothing can be copied out of it after, as nothing could have been. An
++  // active one was dropped by instantiation, and stays for the next. So does a
++  // fill's, whose drop is in the start function this tool writes, which every
++  // instance after the first runs; its name may even be a new fill's now.
++  void applyDropsToModule() {
++    std::unordered_set<Name> filledData, filledElems;
++    for (auto& [_, fill] : fills) {
++      (fill.elem ? filledElems : filledData).insert(fill.segment);
++    }
++    for (auto& segment : wasm->dataSegments) {
++      if (segment->isPassive() && !filledData.contains(segment->name) &&
++          instance->isDroppedDataSegment(segment->name)) {
++        segment->data.clear();
++      }
++    }
++    for (auto& segment : wasm->elementSegments) {
++      if (segment->isPassive() && !filledElems.contains(segment->name) &&
++          instance->isDroppedElementSegment(segment->name)) {
++        segment->data.clear();
++      }
++    }
++  }
++
+   // A memory that could not be flattened keeps its segments, which may be
+   // passive, named by code, or one of several memories', and is written back
+   // as what changed since they seeded it: a segment for each run of changed
+@@ -1979,19 +2006,6 @@
+   // segment directly. Nor does writing back, which applyChangesToModule() does
+   // with segments of its own, leaving the module's alone.
+   flattenedMemory = MemoryUtils::flatten(wasm);
+-  if (!flattenedMemory) {
+-    // data.drop is the one memory effect that never reaches the external
+-    // interface -- the interpreter records it in a set of its own -- so it
+-    // cannot be caught one ctor at a time. Give up on the module, as before.
+-    for (auto& func : wasm.functions) {
+-      if (!func->imported() && !FindAll<DataDrop>(func->body).list.empty()) {
+-        if (!quiet) {
+-          std::cout << "  ...stopping since could not flatten memory\n";
+-        }
+-        return false;
+-      }
+-    }
+-  }
+   return true;
+ }
+ 
+diff -ru a/src/wasm-interpreter.h b/src/wasm-interpreter.h
+--- a/src/wasm-interpreter.h	2026-10-24 10:35:13.031951359 -0300
++++ b/src/wasm-interpreter.h	2026-10-24 10:35:43.882727476 -0300
+@@ -3462,6 +3462,16 @@
+   // logging in the fuzzer, see uses of inStart there.
+   bool inStart = false;
+ 
++  // Whether this instance has dropped a segment: every active one, which
++  // instantiation drops once it has copied it, and each a data.drop or an
++  // elem.drop named.
++  bool isDroppedDataSegment(Name segment) const {
++    return droppedDataSegments.contains(segment);
++  }
++  bool isDroppedElementSegment(Name segment) const {
++    return droppedElementSegments.contains(segment);
++  }
++
+   struct InStartContext {
+     SubType& parent;
+     InStartContext(SubType& parent) : parent(parent) { parent.inStart = true; }
