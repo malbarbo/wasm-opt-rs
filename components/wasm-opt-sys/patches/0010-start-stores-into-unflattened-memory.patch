@@ -1,0 +1,32 @@
+Refuse a store the start function makes into an unflattened memory.
+
+Patch 0001 refuses a store into a memory it could not flatten only once the
+instance is initialized, so that seeding the active segments is not refused.
+The start function runs inside instantiation, before that, so its stores were
+kept in the interpreter's image; then the first application removed the start
+function as evalled, and the image, unflattened, was not written back. A C
+module's `_initialize` writes its memory, and what it wrote was lost. A store
+the start function makes is refused now too, which fails the instantiation, as
+a start function calling an import does: nothing is evalled rather than the
+store lost.
+
+diff -ru a/src/tools/wasm-ctor-eval.cpp b/src/tools/wasm-ctor-eval.cpp
+--- a/src/tools/wasm-ctor-eval.cpp	2026-10-23 23:12:00.024324703 -0300
++++ b/src/tools/wasm-ctor-eval.cpp	2026-10-23 23:12:11.007894136 -0300
+@@ -578,11 +578,14 @@
+   }
+ 
+   template<typename T> void doStore(Address address, T value, Name memoryName) {
+-    if (instanceInitialized && !flattenedMemory) {
++    if ((instanceInitialized || instance->inStart) && !flattenedMemory) {
+       // Nothing would carry this into the module: applyMemoryToModule() needs
+       // a single segment at offset 0. Fail this ctor, and only this one.
+       // Seeding the active segments at instantiation arrives here too, and
+-      // must not be refused -- hence instanceInitialized.
++      // must not be refused -- hence instanceInitialized. The start function
++      // runs before that is set, and is removed as evalled once the state is
++      // applied, so a store it makes is refused too, and fails the
++      // instantiation: no ctor is evalled rather than the store lost.
+       throw FailToEvalException("write to unflattened memory");
+     }
+     Bits::writeLE<T>(value, getMemory(address, memoryName, sizeof(T)));

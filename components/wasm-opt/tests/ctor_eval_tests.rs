@@ -8,6 +8,7 @@ static CTOR_EVAL_UNFLATTENED_WAT: &str = "tests/ctor_eval_unflattened.wat";
 static CTOR_EVAL_LOOP_WAT: &str = "tests/ctor_eval_loop.wat";
 static CTOR_EVAL_DATA_DROP_WAT: &str = "tests/ctor_eval_data_drop.wat";
 static CTOR_EVAL_START_WAT: &str = "tests/ctor_eval_start.wat";
+static CTOR_EVAL_START_STORE_WAT: &str = "tests/ctor_eval_start_store.wat";
 static CTOR_EVAL_KEEP_GOING_WAT: &str = "tests/ctor_eval_keep_going.wat";
 static CTOR_EVAL_LONG_ARRAY_WAT: &str = "tests/ctor_eval_long_array.wat";
 static CTOR_EVAL_BYTE_ARRAY_WAT: &str = "tests/ctor_eval_byte_array.wat";
@@ -244,6 +245,29 @@ fn a_start_function_that_cannot_be_evalled_stops_before_any_ctor() -> anyhow::Re
     // `test1` is a store that is safe to eval, and it was not tried.
     assert!(out.contains(r#"(export "test1""#), "{}", out);
     assert!(out.contains(r#""waka waka""#), "{}", out);
+
+    Ok(())
+}
+
+/// A start function that writes a memory which cannot be flattened leaves no
+/// instance to eval a ctor in, as one that calls an import does: what it wrote
+/// could not be carried back into the module, and evalling the ctors would
+/// remove the start function that wrote it.
+#[test]
+fn a_start_function_that_writes_an_unflattened_memory_stops_before_any_ctor(
+) -> anyhow::Result<()> {
+    let (outcome, out) = eval_file(
+        CtorEvalOptions::new().all_features().add_ctor("test1"),
+        CTOR_EVAL_START_STORE_WAT,
+    )?;
+
+    assert_eq!(outcome, CtorEvalOutcome::NothingEvaluated);
+
+    // The start function is still there to make its store, and `test1` was
+    // not tried.
+    assert!(out.contains("(start $start)"), "{}", out);
+    assert!(out.contains("i32.store8"), "{}", out);
+    assert!(out.contains(r#"(export "test1""#), "{}", out);
 
     Ok(())
 }

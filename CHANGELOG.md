@@ -94,6 +94,11 @@
   however short. V8 decodes a constant expression one instruction at a time as
   it compiles: on a module whose heap held 884 013 such bytes, its globals
   shrank from 4.4 MB to 2.3 MB and compiling it takes 17 % fewer instructions.
+- Fixed a start function that writes a memory which cannot be flattened: its
+  stores were kept in the evaluator's image of memory, the start function was
+  removed as evaluated, and the image was not written back, so what it wrote
+  was lost. Such a store is refused now, which fails the instantiation, and
+  nothing is evaluated, as with a start function that calls an import.
 - Fixed a ctor evaluated in part whose locals held an object: the global it was
   written to was dropped as soon as it was made, and the module could not be
   written.
