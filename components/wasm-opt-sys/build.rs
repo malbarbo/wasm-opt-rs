@@ -133,6 +133,8 @@ fn apply_patches(src_dir: &Path) -> anyhow::Result<PathBuf> {
 
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")?;
     let patches_dir = Path::new(&manifest_dir).join("patches");
+    // A patch added or removed changes the directory, not any patch.
+    println!("cargo::rerun-if-changed={}", patches_dir.display());
 
     let mut patches: Vec<PathBuf> = fs::read_dir(&patches_dir)?
         .map(|e| e.map(|e| e.path()))

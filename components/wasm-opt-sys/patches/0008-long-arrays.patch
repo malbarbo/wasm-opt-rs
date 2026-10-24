@@ -1,0 +1,238 @@
+Give an array of more than 10 000 values its values in the start function.
+
+V8 refuses an `array.new_fixed` of more values than 10 000
+(`kV8MaxWasmArrayNewFixedLength`), and a constant expression has no other way
+to give an array values that differ. So a defining global whose array is
+longer, and mutable, is made empty, `array.new_default` or, for an element type
+with no default, an `array.new` of its first value; and the start function
+copies the values in, with `array.init_data` from a passive data segment for
+numbers, or `array.init_elem` from a passive element segment for references,
+then drops the segment. An element segment's items are constant expressions
+read after every global, so they can name any defining global, cycles
+included. The fill is kept with its defining global, and every application of
+state puts the fills of the globals it keeps back in the start function.
+
+The defining globals an application allocates while serializing a partially
+evalled ctor's locals, before the globals are applied, are now kept by that
+application: they were dropped as the previous application's, and the code
+that resumes the ctor read a global that no longer existed.
+
+diff -ru a/src/tools/wasm-ctor-eval.cpp b/src/tools/wasm-ctor-eval.cpp
+--- a/src/tools/wasm-ctor-eval.cpp	2026-10-23 21:19:37.721424976 -0300
++++ b/src/tools/wasm-ctor-eval.cpp	2026-10-23 21:32:59.141502391 -0300
+@@ -343,6 +343,22 @@
+   // ctor resumes with, and the results a ctor that kept its export returns.
+   std::unordered_set<Name> pinnedGlobals;
+ 
++  // The defining globals this application of state allocated. They are live
++  // whether pinned or not, and some exist before applyGlobalsToModule() runs:
++  // serializing the locals of a partially evalled ctor allocates them.
++  std::unordered_set<Name> freshGlobals;
++
++  // An array of more values than an array.new_fixed can hold, by its defining
++  // global: the passive segment that holds its values, and the code that copies
++  // them in, which every application puts in the start function. See
++  // makeArray().
++  struct Fill {
++    Name segment;
++    bool elem;
++    Expression* code;
++  };
++  InsertOrderedMap<Name, Fill> fills;
++
+   // Set to true after we create the instance.
+   bool instanceInitialized = false;
+ 
+@@ -594,6 +610,7 @@
+     // The process of allocating "defining globals" begins here, from scratch
+     // each time (things live before may no longer be).
+     definingGlobals.clear();
++    freshGlobals.clear();
+ 
+     // Clear any startup operations as well (which may apply to globals that
+     // become no longer live; we'll create new start operations as we need
+@@ -661,7 +678,8 @@
+     // later application, each of which adds as many again -- the cost of an
+     // application grew with the number of applications before it, and the
+     // ctors evalled in one call cost the square of their number. The final
+-    // remove-unused-module-elements would have dropped them anyway.
++    // remove-unused-module-elements would have dropped them anyway. The ones
++    // this application allocated are being written, pinned or not.
+     std::unordered_set<Name> kept;
+     std::vector<Name> work(pinnedGlobals.begin(), pinnedGlobals.end());
+     while (!work.empty()) {
+@@ -675,6 +693,13 @@
+           work.push_back(get->name);
+         }
+       }
++      if (auto it = fills.find(name); it != fills.end() && it->second.elem) {
++        for (auto* item : wasm->getElementSegment(it->second.segment)->data) {
++          for (auto* get : FindAll<GlobalGet>(item).list) {
++            work.push_back(get->name);
++          }
++        }
++      }
+     }
+ 
+     auto oldGlobals = std::move(wasm->globals);
+@@ -683,8 +708,10 @@
+ 
+     for (auto& oldGlobal : oldGlobals) {
+       if (allocatedGlobals.count(oldGlobal->name) &&
+-          !kept.count(oldGlobal->name)) {
++          !kept.count(oldGlobal->name) &&
++          !freshGlobals.count(oldGlobal->name)) {
+         allocatedGlobals.erase(oldGlobal->name);
++        dropFill(oldGlobal->name);
+         continue;
+       }
+       if (oldGlobal->imported()) {
+@@ -707,6 +734,7 @@
+       // value when we created it.)
+       auto iter = instance->allGlobals.find(oldGlobal->name);
+       if (iter != instance->allGlobals.end()) {
++        dropFill(oldGlobal->name);
+         oldGlobal->init = getSerialization(iter->second->literals, name);
+       }
+ 
+@@ -714,6 +742,13 @@
+       wasm->addGlobal(std::move(oldGlobal));
+     }
+ 
++    // The start function copies the values of every array too long for an
++    // array.new_fixed into it, those of this application and those of a pinned
++    // global alike: clearApplyState() emptied it.
++    for (auto& [_, fill] : fills) {
++      addStartCode(fill.code);
++    }
++
+     // Finally, we need to fix up cycles. The serialization we just emitted
+     // ignores them, so we can end up with things like this:
+     //
+@@ -1004,6 +1039,7 @@
+           Names::getValidNameGivenExisting("ctor-eval$global", usedGlobalNames);
+         usedGlobalNames.insert(definingGlobalName);
+         allocatedGlobals.insert(definingGlobalName);
++        freshGlobals.insert(definingGlobalName);
+         definingGlobals[data] = DefiningGlobalInfo{definingGlobalName, type};
+       }
+ 
+@@ -1029,7 +1065,7 @@
+         init = builder.makeStructNew(heapType, args, desc);
+       } else if (heapType.isArray()) {
+         // TODO: for repeated identical values, can use ArrayNew
+-        init = builder.makeArrayNewFixed(heapType, args);
++        init = makeArray(heapType, {definingGlobalName, type}, values, args);
+       } else {
+         WASM_UNREACHABLE("bad gc type");
+       }
+@@ -1099,10 +1135,6 @@
+   //
+   // run during the start function.
+   void addStartFixup(DefiningGlobalInfo global, Index index, GlobalGet* value) {
+-    if (!startBlock) {
+-      createStartBlock();
+-    }
+-
+     Builder builder(*wasm);
+     auto* getGlobal = builder.makeGlobalGet(global.name, global.type);
+ 
+@@ -1117,7 +1149,97 @@
+                                  MemoryOrder::Unordered);
+     }
+ 
+-    (*startBlock)->list.push_back(set);
++    addStartCode(set);
++  }
++
++  void addStartCode(Expression* code) {
++    if (!startBlock) {
++      createStartBlock();
++    }
++    (*startBlock)->list.push_back(code);
++  }
++
++  // V8 refuses an array.new_fixed of more values than this
++  // (kV8MaxWasmArrayNewFixedLength), and a constant expression has no other
++  // way to give an array its values. Such an array is made empty instead, and
++  // the start function copies the values in from a passive segment: a data
++  // segment for numbers, an element segment, whose items are constant
++  // expressions read after every global, for references.
++  static constexpr Index MaxArrayNewFixedValues = 10000;
++
++  Expression* makeArray(HeapType heapType,
++                        DefiningGlobalInfo global,
++                        const Literals& values,
++                        std::vector<Expression*>& args) {
++    Builder builder(*wasm);
++    auto element = heapType.getArray().element;
++    if (args.size() <= MaxArrayNewFixedValues ||
++        element.mutable_ == Immutable || !wasm->features.hasBulkMemory()) {
++      return builder.makeArrayNewFixed(heapType, args);
++    }
++
++    auto size = int32_t(args.size());
++    Fill fill;
++    Expression* init;
++    Expression* copy;
++    Expression* drop;
++    auto* ref = builder.makeGlobalGet(global.name, global.type);
++    if (element.type.isRef()) {
++      fill.segment = Names::getValidElementSegmentName(*wasm, "ctor-eval$elem");
++      fill.elem = true;
++      init =
++        element.type.isDefaultable()
++          ? builder.makeArrayNew(heapType, builder.makeConst(size))
++          : builder.makeArrayNew(heapType,
++                                 builder.makeConst(size),
++                                 ExpressionManipulator::copy(args[0], *wasm));
++      auto segment =
++        builder.makeElementSegment(fill.segment, Name(), nullptr, element.type);
++      segment->data = std::move(args);
++      wasm->addElementSegment(std::move(segment));
++      copy = builder.makeArrayInitElem(fill.segment,
++                                       ref,
++                                       builder.makeConst(int32_t(0)),
++                                       builder.makeConst(int32_t(0)),
++                                       builder.makeConst(size));
++      drop = builder.makeElemDrop(fill.segment);
++    } else {
++      fill.segment = Names::getValidDataSegmentName(*wasm, "ctor-eval$data");
++      fill.elem = false;
++      init = builder.makeArrayNew(heapType, builder.makeConst(size));
++      auto width = element.getByteSize();
++      std::vector<char> bytes;
++      bytes.reserve(values.size() * width);
++      for (auto& value : values) {
++        uint8_t bits[16];
++        value.getBits(bits);
++        bytes.insert(bytes.end(), bits, bits + width);
++      }
++      wasm->addDataSegment(builder.makeDataSegment(
++        fill.segment, Name(), nullptr, bytes.data(), bytes.size()));
++      copy = builder.makeArrayInitData(fill.segment,
++                                       ref,
++                                       builder.makeConst(int32_t(0)),
++                                       builder.makeConst(int32_t(0)),
++                                       builder.makeConst(size));
++      drop = builder.makeDataDrop(fill.segment);
++    }
++    fill.code = builder.makeSequence(copy, drop);
++    fills[global.name] = fill;
++    return init;
++  }
++
++  void dropFill(Name global) {
++    auto it = fills.find(global);
++    if (it == fills.end()) {
++      return;
++    }
++    if (it->second.elem) {
++      wasm->removeElementSegment(it->second.segment);
++    } else {
++      wasm->removeDataSegment(it->second.segment);
++    }
++    fills.erase(it);
+   }
+ 
+   // A block in the start function where we put the operations we need to occur

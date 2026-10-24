@@ -9,6 +9,8 @@ static CTOR_EVAL_LOOP_WAT: &str = "tests/ctor_eval_loop.wat";
 static CTOR_EVAL_DATA_DROP_WAT: &str = "tests/ctor_eval_data_drop.wat";
 static CTOR_EVAL_START_WAT: &str = "tests/ctor_eval_start.wat";
 static CTOR_EVAL_KEEP_GOING_WAT: &str = "tests/ctor_eval_keep_going.wat";
+static CTOR_EVAL_LONG_ARRAY_WAT: &str = "tests/ctor_eval_long_array.wat";
+static CTOR_EVAL_PARTIAL_LOCAL_WAT: &str = "tests/ctor_eval_partial_local.wat";
 
 fn eval_file(
     options: &mut CtorEvalOptions,
@@ -307,6 +309,45 @@ fn without_keep_going_a_failing_ctor_stops_evaluation() -> anyhow::Result<()> {
 
     assert_eq!(outcome, CtorEvalOutcome::StoppedAt("fail".to_string()));
     assert!(out.contains(r#"(export "b""#), "{}", out);
+
+    Ok(())
+}
+
+/// V8 refuses an `array.new_fixed` of more than 10 000 values, so a longer
+/// array is made empty and the start function copies its values in: numbers
+/// from a passive data segment, references from a passive element segment.
+#[test]
+fn a_long_array_is_filled_in_the_start_function() -> anyhow::Result<()> {
+    let (outcome, out) = eval_file(
+        CtorEvalOptions::new().all_features().add_ctor("make"),
+        CTOR_EVAL_LONG_ARRAY_WAT,
+    )?;
+
+    assert_eq!(outcome, CtorEvalOutcome::Finished);
+    assert!(!out.contains("array.new_fixed"), "{}", out);
+    assert!(out.contains("(array.init_data $B"), "{}", out);
+    assert!(out.contains("(array.init_elem $R"), "{}", out);
+    assert!(out.contains("(data.drop "), "{}", out);
+    assert!(out.contains("(elem.drop "), "{}", out);
+    assert!(out.contains("(start "), "{}", out);
+
+    // The byte the ctor wrote is the segment's last.
+    assert!(out.contains(r#"\c8")"#), "{}", out);
+
+    Ok(())
+}
+
+/// A ctor evalled in part resumes with its locals, and an object one holds is
+/// serialized into a defining global the code that resumes reads.
+#[test]
+fn a_partly_evalled_ctor_keeps_the_objects_its_locals_hold() -> anyhow::Result<()> {
+    let (outcome, out) = eval_file(
+        CtorEvalOptions::new().all_features().add_ctor("f"),
+        CTOR_EVAL_PARTIAL_LOCAL_WAT,
+    )?;
+
+    assert_eq!(outcome, CtorEvalOutcome::StoppedAt("f".to_string()));
+    assert!(out.contains("(global $ctor-eval$global"), "{}", out);
 
     Ok(())
 }

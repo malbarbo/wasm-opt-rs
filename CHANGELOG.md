@@ -83,6 +83,17 @@
   when the start function builds a large heap: on one that builds 87 000
   objects, 284 ctors take 11 s and 6 GB where they took nine minutes and
   31 GB, and with 12 failing ctors among them one call takes 27 s.
+- Ctor evaluation writes a module V8 can compile when the heap holds an array
+  of more than 10 000 values. It wrote every array as an `array.new_fixed`,
+  and V8 refuses one longer than that. Now such an array, if mutable, is made
+  empty in its global and the start function copies its values in from a
+  passive segment: a data segment for numbers, an element segment for
+  references.
+- Fixed a ctor evaluated in part whose locals held an object: the global it was
+  written to was dropped as soon as it was made, and the module could not be
+  written.
+- A patch added to `components/wasm-opt-sys/patches/` now rebuilds Binaryen;
+  only a change to one already there did.
 
 ## 0.116.1
 
