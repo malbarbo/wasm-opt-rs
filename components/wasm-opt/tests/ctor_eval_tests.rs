@@ -13,6 +13,7 @@ static CTOR_EVAL_KEEP_GOING_WAT: &str = "tests/ctor_eval_keep_going.wat";
 static CTOR_EVAL_LONG_ARRAY_WAT: &str = "tests/ctor_eval_long_array.wat";
 static CTOR_EVAL_BYTE_ARRAY_WAT: &str = "tests/ctor_eval_byte_array.wat";
 static CTOR_EVAL_PARTIAL_LOCAL_WAT: &str = "tests/ctor_eval_partial_local.wat";
+static CTOR_EVAL_MEMORIES_WAT: &str = "tests/ctor_eval_memories.wat";
 
 fn eval_file(
     options: &mut CtorEvalOptions,
@@ -143,7 +144,7 @@ fn invalid_stdin_path_is_an_error() {
 ///
 /// Reading memory does not need a flat one -- the interpreter seeds each active
 /// segment at its own offset -- and neither does reading a segment as an array.
-/// Writing does, so the ctor that writes fails, and only it.
+/// Nor does writing: what changed is carried back as segments of its own.
 #[test]
 fn a_module_that_cannot_be_flattened_is_still_evalled() -> anyhow::Result<()> {
     let (outcome, out) = eval_file(
@@ -155,7 +156,7 @@ fn a_module_that_cannot_be_flattened_is_still_evalled() -> anyhow::Result<()> {
         CTOR_EVAL_UNFLATTENED_WAT,
     )?;
 
-    assert_eq!(outcome, CtorEvalOutcome::StoppedAt("test3".to_string()));
+    assert_eq!(outcome, CtorEvalOutcome::Finished);
 
     // `test1` read the active segment: 119 is "w", the first byte of "waka".
     assert!(!out.contains(r#"(export "test1""#), "{}", out);
@@ -171,15 +172,11 @@ fn a_module_that_cannot_be_flattened_is_still_evalled() -> anyhow::Result<()> {
     assert!(out.contains("array.new_fixed"), "{}", out);
     assert!(!out.contains(r#""hello""#), "{}", out);
 
-    // `test3` wrote memory, and nothing could carry that back into a module
-    // whose memory is not one segment at offset 0. It was left alone, and so
-    // was what it would have written to.
-    assert!(out.contains(r#"(export "test3""#), "{}", out);
-    assert!(
-        out.contains(r#"(data $active (i32.const 10) "waka waka")"#),
-        "{}",
-        out
-    );
+    // `test3` wrote memory, and what changed follows the segment it wrote
+    // over, as a segment instantiation applies after it.
+    assert!(!out.contains(r#"(export "test3""#), "{}", out);
+    assert!(out.contains(r#"(data $active (i32.const 10) "#), "{}", out);
+    assert!(out.contains(r#"(i32.const 12) "n")"#), "{}", out);
 
     Ok(())
 }
@@ -249,25 +246,74 @@ fn a_start_function_that_cannot_be_evalled_stops_before_any_ctor() -> anyhow::Re
     Ok(())
 }
 
-/// A start function that writes a memory which cannot be flattened leaves no
-/// instance to eval a ctor in, as one that calls an import does: what it wrote
-/// could not be carried back into the module, and evalling the ctors would
-/// remove the start function that wrote it.
+/// A start function that writes a memory which cannot be flattened is evalled
+/// like any other: what it wrote is carried into the module as an active
+/// segment after the others, which instantiation applies last.
 #[test]
-fn a_start_function_that_writes_an_unflattened_memory_stops_before_any_ctor() -> anyhow::Result<()>
-{
+fn a_start_function_that_writes_an_unflattened_memory_is_evalled() -> anyhow::Result<()> {
     let (outcome, out) = eval_file(
         CtorEvalOptions::new().all_features().add_ctor("test1"),
         CTOR_EVAL_START_STORE_WAT,
     )?;
 
-    assert_eq!(outcome, CtorEvalOutcome::NothingEvaluated);
+    assert_eq!(outcome, CtorEvalOutcome::Finished);
 
-    // The start function is still there to make its store, and `test1` was
-    // not tried.
-    assert!(out.contains("(start $start)"), "{}", out);
-    assert!(out.contains("i32.store8"), "{}", out);
-    assert!(out.contains(r#"(export "test1""#), "{}", out);
+    // The start function is gone, and its store is data. `test1` read it.
+    assert!(!out.contains("(start"), "{}", out);
+    assert!(!out.contains("i32.store8"), "{}", out);
+    assert!(out.contains(r#"(i32.const 12) "n")"#), "{}", out);
+    assert!(!out.contains(r#"(export "test1""#), "{}", out);
+    assert!(
+        out.contains("(global $read (mut i32) (i32.const 110))"),
+        "{}",
+        out
+    );
+
+    // The segment it wrote over is still there, and the new one comes after
+    // it. The byte it overwrites is dead, and a cleanup pass zeroes it.
+    assert!(
+        out.contains(r#"(data $active (i32.const 10) "wa\00a waka")"#),
+        "{}",
+        out
+    );
+    assert!(
+        out.find("(data $active").unwrap() < out.find("(data $ctor-eval$memory").unwrap(),
+        "{}",
+        out
+    );
+
+    Ok(())
+}
+
+/// Each memory is carried back on its own, and a ctor passed over under
+/// `keep_going` leaves no byte of what it stored in the item that failed, even
+/// one past every segment, where no instantiation writes.
+#[test]
+fn every_memory_is_carried_back_and_a_skipped_ctor_leaves_none_of_its_stores() -> anyhow::Result<()>
+{
+    let (outcome, out) = eval_file(
+        CtorEvalOptions::new()
+            .all_features()
+            .add_ctor("test1")
+            .add_ctor("fail")
+            .add_ctor("test2")
+            .keep_going(true),
+        CTOR_EVAL_MEMORIES_WAT,
+    )?;
+
+    assert_eq!(outcome, CtorEvalOutcome::Skipped(vec!["fail".to_string()]));
+
+    assert!(!out.contains("(start"), "{}", out);
+    assert!(out.contains(r#"(memory $b) (i32.const 1) "X")"#), "{}", out);
+    // `$a` is the first memory, which the printer leaves unnamed.
+    assert!(out.contains(r#"(i32.const 100) "\07")"#), "{}", out);
+    // `fail`'s store is still code in what is left of it, and not data.
+    assert!(!out.contains(r#"(i32.const 200) "\t")"#), "{}", out);
+    assert!(
+        out.contains("(global $read (mut i32) (i32.const 7))"),
+        "{}",
+        out
+    );
 
     Ok(())
 }

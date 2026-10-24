@@ -125,6 +125,14 @@ fn run_api(module: &Path, ctors: &str, outfile: &Path) -> Result<String> {
     Ok(fs::read_to_string(outfile)?)
 }
 
+/// The test modules the fork evaluates differently from Binaryen's own tool, by
+/// design, each with why. Held both ways: each must still differ.
+static DIVERGES: &[(&str, &str)] = &[(
+    "memory-init.wast",
+    "patch 0011 writes back the store before the memory.init, which the tool, \
+     unable to flatten a memory that a memory.init names, leaves as code",
+)];
+
 #[test]
 fn ctor_eval_matches_binaryen() -> Result<()> {
     let tempdir = tempfile::tempdir()?;
@@ -141,6 +149,20 @@ fn ctor_eval_matches_binaryen() -> Result<()> {
             .with_context(|| format!("binaryen on {}", module.display()))?;
         let api_out = run_api(&module, ctors, &tempdir.path().join("api.wat"))
             .with_context(|| format!("api on {}", module.display()))?;
+
+        let name = module
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
+        if DIVERGES.iter().any(|(d, _)| *d == name) {
+            if binaryen_out == api_out {
+                bail!(
+                    "{} no longer differs: take it off DIVERGES",
+                    module.display()
+                );
+            }
+            continue;
+        }
 
         if binaryen_out != api_out {
             bail!(

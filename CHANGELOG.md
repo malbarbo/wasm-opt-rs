@@ -99,6 +99,13 @@
   removed as evaluated, and the image was not written back, so what it wrote
   was lost. Such a store is refused now, which fails the instantiation, and
   nothing is evaluated, as with a start function that calls an import.
+- A memory that cannot be flattened is written back now, so a ctor or a start
+  function that stores into it is evaluated rather than refused. What changed
+  since the active segments seeded it becomes active segments of its own,
+  after every other, and the module's segments are left alone; a module of
+  several memories is written back the same way, each memory on its own. A GC
+  program merged with a C module, whose `_initialize` always stores, was
+  evaluated not at all, and now is entirely.
 - Fixed a ctor evaluated in part whose locals held an object: the global it was
   written to was dropped as soon as it was made, and the module could not be
   written.

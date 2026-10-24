@@ -12,7 +12,7 @@
   (export "read" (global $read))
   (export "arr" (global $arr))
   (start $start)
-  ;; 110 is "n": "wanakwaka" for as long as the module runs.
+  ;; 110 is "n": "wana waka" for as long as the module runs.
   (func $start
     (i32.store8 (i32.const 12) (i32.const 110))
     (global.set $arr (array.new_data $bytes $passive (i32.const 0) (i32.const 5)))

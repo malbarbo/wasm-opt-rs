@@ -24,7 +24,7 @@
   (func $test2
     (global.set $arr (array.new_data $bytes $passive (i32.const 0) (i32.const 5)))
   )
-  ;; Writing memory does. This one, and only this one, must fail.
+  ;; Nor does writing it: 110 is "n", "wana waka".
   (func $test3
     (i32.store8 (i32.const 12) (i32.const 110))
   )

@@ -1,0 +1,151 @@
+Write back what execution stored into a memory that could not be flattened.
+
+Patch 0001 evals a module whose memory cannot be flattened but refuses every
+store into it, and patch 0010 extends that to the start function, because the
+one way `applyMemoryToModule` knows to write memory back is to dump the whole
+image into a single segment at offset 0. A C module's `_initialize` stores the
+flag that it has run before anything else, so a GC program merged with one --
+two memories, passive segments, `array.new_data` -- was evalled not at all.
+
+Writing back needs no flattening. Take each memory as its active segments
+seeded it, before execution first stores into it, and on every application
+compare it with the memory now: each run of changed bytes becomes an active
+segment of its own, added after every other, so that instantiation applies it
+last and over whatever was there. The module's segments are left alone, which
+keeps a passive one, one code names, and one in another memory what they were.
+The previous application's segments are replaced, not added to.
+
+diff -ru a/src/tools/wasm-ctor-eval.cpp b/src/tools/wasm-ctor-eval.cpp
+--- a/src/tools/wasm-ctor-eval.cpp	2026-10-24 00:05:23.922805941 -0300
++++ b/src/tools/wasm-ctor-eval.cpp	2026-10-24 00:09:01.790306629 -0300
+@@ -302,8 +302,9 @@
+ static thread_local bool quiet = false;
+ 
+ // Whether linear memory was flattened into the one segment at offset 0 that
+-// applyMemoryToModule() writes an evalled memory image back into. Set by
+-// canEval(), which is where the reasoning is.
++// applyMemoryToModule() writes an evalled memory image back into. If not,
++// applyChangesToModule() writes what changed instead. Set by canEval(), which
++// is where the reasoning is.
+ static thread_local bool flattenedMemory = true;
+ 
+ // How many instructions evalling may execute before it gives up, or
+@@ -325,6 +326,15 @@
+   // A representation of the contents of wasm memory as we execute.
+   std::unordered_map<Name, std::vector<char>> memories;
+ 
++  // Each memory that could not be flattened as its active segments seeded it,
++  // taken before execution first stores into it: what
++  // applyChangesToModule() compares against. See doStore().
++  std::unordered_map<Name, std::vector<char>> seeded;
++
++  // The segments the last applyChangesToModule() added, which the next one
++  // replaces.
++  std::vector<Name> changeSegments;
++
+   // All the names of globals we've seen in the module. We cannot reuse these.
+   // We must track these manually as we will be adding more, and as we do so we
+   // also reorder them, so we remove and re-add globals, which means the module
+@@ -385,10 +395,10 @@
+     }
+ 
+     // If nothing was ever written to memories then there is nothing to update.
+-    // An unflattened memory cannot be written back at all, and nothing was
+-    // written to it either: doStore() fails the ctor rather than let it.
+     if (flattenedMemory && !memories.empty()) {
+       applyMemoryToModule();
++    } else if (!flattenedMemory) {
++      applyChangesToModule();
+     }
+ 
+     applyGlobalsToModule();
+@@ -579,14 +589,11 @@
+ 
+   template<typename T> void doStore(Address address, T value, Name memoryName) {
+     if ((instanceInitialized || instance->inStart) && !flattenedMemory) {
+-      // Nothing would carry this into the module: applyMemoryToModule() needs
+-      // a single segment at offset 0. Fail this ctor, and only this one.
+-      // Seeding the active segments at instantiation arrives here too, and
+-      // must not be refused -- hence instanceInitialized. The start function
+-      // runs before that is set, and is removed as evalled once the state is
+-      // applied, so a store it makes is refused too, and fails the
+-      // instantiation: no ctor is evalled rather than the store lost.
+-      throw FailToEvalException("write to unflattened memory");
++      // The first store execution makes, so the memory is still what its
++      // active segments seeded: seeding arrives here too, before the start
++      // function runs. A new instance, which init() gives empty memories,
++      // seeds them from the module as last applied, and finds this taken.
++      seeded.try_emplace(memoryName, memories[memoryName]);
+     }
+     Bits::writeLE<T>(value, getMemory(address, memoryName, sizeof(T)));
+   }
+@@ -622,6 +629,58 @@
+   }
+ 
+ private:
++  // A memory that could not be flattened keeps its segments, which may be
++  // passive, named by code, or one of several memories', and is written back
++  // as what changed since they seeded it: a segment for each run of changed
++  // bytes, after every other, so that instantiation applies it last.
++  void applyChangesToModule() {
++    for (auto name : changeSegments) {
++      wasm->removeDataSegment(name);
++    }
++    changeSegments.clear();
++
++    // Fewer equal bytes than this between two changed ones cost less inside
++    // one segment than as the header of another.
++    const size_t Gap = 8;
++    Builder builder(*wasm);
++    for (auto& memory : wasm->memories) {
++      auto it = seeded.find(memory->name);
++      if (it == seeded.end()) {
++        continue;
++      }
++      auto& before = it->second;
++      auto& after = memories[memory->name];
++      auto byte = [](const std::vector<char>& bytes, size_t i) {
++        return i < bytes.size() ? bytes[i] : char(0);
++      };
++      auto end = std::max(before.size(), after.size());
++      for (size_t i = 0; i < end; i++) {
++        if (byte(before, i) == byte(after, i)) {
++          continue;
++        }
++        auto last = i;
++        for (auto j = i + 1; j < end && j <= last + Gap; j++) {
++          if (byte(before, j) != byte(after, j)) {
++            last = j;
++          }
++        }
++        std::vector<char> bytes;
++        for (auto j = i; j <= last; j++) {
++          bytes.push_back(byte(after, j));
++        }
++        auto name = Names::getValidDataSegmentName(*wasm, "ctor-eval$memory");
++        wasm->addDataSegment(builder.makeDataSegment(
++          name,
++          memory->name,
++          builder.makeConst(Literal::makeFromInt64(i, memory->addressType)),
++          bytes.data(),
++          bytes.size()));
++        changeSegments.push_back(name);
++        i = last;
++      }
++    }
++  }
++
+   void applyMemoryToModule() {
+     // Memory must have already been flattened into the standard form: one
+     // segment at offset 0, or none.
+@@ -1917,8 +1976,8 @@
+   //
+   // Eval them anyway. Reading memory does not need a flat one: the interpreter
+   // seeds each active segment at its own offset, and array.new_data reads its
+-  // segment directly. Only writing back does, so a ctor that writes memory is
+-  // failed by doStore(), on its own, instead of the module being given up on.
++  // segment directly. Nor does writing back, which applyChangesToModule() does
++  // with segments of its own, leaving the module's alone.
+   flattenedMemory = MemoryUtils::flatten(wasm);
+   if (!flattenedMemory) {
+     // data.drop is the one memory effect that never reaches the external
