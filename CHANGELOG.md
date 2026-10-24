@@ -89,6 +89,11 @@
   empty in its global and the start function copies its values in from a
   passive segment: a data segment for numbers, an element segment for
   references.
+- An array of numbers that takes fewer bytes as data than as one constant per
+  value, a string's bytes, is filled in the start function the same way,
+  however short. V8 decodes a constant expression one instruction at a time as
+  it compiles: on a module whose heap held 884 013 such bytes, its globals
+  shrank from 4.4 MB to 2.3 MB and compiling it takes 17 % fewer instructions.
 - Fixed a ctor evaluated in part whose locals held an object: the global it was
   written to was dropped as soon as it was made, and the module could not be
   written.

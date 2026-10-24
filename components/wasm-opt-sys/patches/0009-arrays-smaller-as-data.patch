@@ -1,0 +1,95 @@
+Fill an array of numbers that is smaller as data in the start function.
+
+A string's bytes, serialized as an `array.new_fixed`, take an `i32.const` each,
+two or three bytes for one, and V8 decodes a constant expression an
+instruction at a time as it compiles the module. A hello world over a whole
+JDK held 884 013 such bytes in 25 750 arrays, which made its globals 4.4 MB
+and its compilation 44 % longer than the module's before evaluation. So an
+array of numbers whose values take fewer bytes in a passive data segment, with
+the code that copies them in, than as constants is filled in the start
+function as one of more than 10 000 values is, however short.
+
+diff -ru a/src/tools/wasm-ctor-eval.cpp b/src/tools/wasm-ctor-eval.cpp
+--- a/src/tools/wasm-ctor-eval.cpp	2026-10-23 21:32:59.141502391 -0300
++++ b/src/tools/wasm-ctor-eval.cpp	2026-10-23 22:10:27.529450143 -0300
+@@ -348,10 +348,10 @@
+   // serializing the locals of a partially evalled ctor allocates them.
+   std::unordered_set<Name> freshGlobals;
+ 
+-  // An array of more values than an array.new_fixed can hold, by its defining
+-  // global: the passive segment that holds its values, and the code that copies
+-  // them in, which every application puts in the start function. See
+-  // makeArray().
++  // An array of more values than an array.new_fixed can hold, or of numbers
++  // smaller as data, by its defining global: the passive segment that holds its
++  // values, and the code that copies them in, which every application puts in
++  // the start function. See makeArray().
+   struct Fill {
+     Name segment;
+     bool elem;
+@@ -1164,17 +1164,62 @@
+   // way to give an array its values. Such an array is made empty instead, and
+   // the start function copies the values in from a passive segment: a data
+   // segment for numbers, an element segment, whose items are constant
+-  // expressions read after every global, for references.
++  // expressions read after every global, for references. An array of numbers
++  // smaller as data than as constants is filled so too, however short.
+   static constexpr Index MaxArrayNewFixedValues = 10000;
+ 
++  // The bytes a fill adds beyond its values: the segment's header, and the
++  // array.init_data and data.drop in the start function, with their operands.
++  static constexpr size_t FillBytes = 32;
++
++  // Whether an array of numbers takes fewer bytes in a data segment than as
++  // one constant each: a string's bytes do, at one byte each against the two
++  // or three of an i32.const. V8 decodes a constant expression an
++  // instruction at a time, as it compiles the module, and copies a segment.
++  static bool smallerAsData(Field element, const Literals& values) {
++    size_t constants = 0;
++    for (auto& value : values) {
++      constants += constantBytes(value);
++    }
++    return element.getByteSize() * values.size() + FillBytes < constants;
++  }
++
++  // The bytes of the const instruction that gives a value.
++  static size_t constantBytes(const Literal& value) {
++    switch (value.type.getBasic()) {
++      case Type::i32:
++        return 1 + signedLEBBytes(value.geti32());
++      case Type::i64:
++        return 1 + signedLEBBytes(value.geti64());
++      case Type::f32:
++        return 5;
++      case Type::f64:
++        return 9;
++      case Type::v128:
++        return 18;
++      default:
++        WASM_UNREACHABLE("not a number");
++    }
++  }
++
++  static size_t signedLEBBytes(int64_t value) {
++    size_t bytes = 1;
++    while (value < -64 || value > 63) {
++      value >>= 7;
++      bytes++;
++    }
++    return bytes;
++  }
++
+   Expression* makeArray(HeapType heapType,
+                         DefiningGlobalInfo global,
+                         const Literals& values,
+                         std::vector<Expression*>& args) {
+     Builder builder(*wasm);
+     auto element = heapType.getArray().element;
+-    if (args.size() <= MaxArrayNewFixedValues ||
+-        element.mutable_ == Immutable || !wasm->features.hasBulkMemory()) {
++    if (element.mutable_ == Immutable || !wasm->features.hasBulkMemory() ||
++        (args.size() <= MaxArrayNewFixedValues &&
++         (element.type.isRef() || !smallerAsData(element, values)))) {
+       return builder.makeArrayNewFixed(heapType, args);
+     }
+ 

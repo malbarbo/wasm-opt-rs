@@ -10,6 +10,7 @@ static CTOR_EVAL_DATA_DROP_WAT: &str = "tests/ctor_eval_data_drop.wat";
 static CTOR_EVAL_START_WAT: &str = "tests/ctor_eval_start.wat";
 static CTOR_EVAL_KEEP_GOING_WAT: &str = "tests/ctor_eval_keep_going.wat";
 static CTOR_EVAL_LONG_ARRAY_WAT: &str = "tests/ctor_eval_long_array.wat";
+static CTOR_EVAL_BYTE_ARRAY_WAT: &str = "tests/ctor_eval_byte_array.wat";
 static CTOR_EVAL_PARTIAL_LOCAL_WAT: &str = "tests/ctor_eval_partial_local.wat";
 
 fn eval_file(
@@ -333,6 +334,23 @@ fn a_long_array_is_filled_in_the_start_function() -> anyhow::Result<()> {
 
     // The byte the ctor wrote is the segment's last.
     assert!(out.contains(r#"\c8")"#), "{}", out);
+
+    Ok(())
+}
+
+/// An array whose values take fewer bytes as data than as constants, a
+/// string's bytes, is filled in the start function too, however short.
+#[test]
+fn an_array_smaller_as_data_is_filled_in_the_start_function() -> anyhow::Result<()> {
+    let (outcome, out) = eval_file(
+        CtorEvalOptions::new().all_features().add_ctor("make"),
+        CTOR_EVAL_BYTE_ARRAY_WAT,
+    )?;
+
+    assert_eq!(outcome, CtorEvalOutcome::Finished);
+    assert!(out.contains("(array.init_data $B"), "{}", out);
+    assert!(out.contains(r#""hhhhhhhh"#), "{}", out);
+    assert!(out.contains("(array.new_fixed $I 3"), "{}", out);
 
     Ok(())
 }
