@@ -254,8 +254,8 @@ fn a_start_function_that_cannot_be_evalled_stops_before_any_ctor() -> anyhow::Re
 /// could not be carried back into the module, and evalling the ctors would
 /// remove the start function that wrote it.
 #[test]
-fn a_start_function_that_writes_an_unflattened_memory_stops_before_any_ctor(
-) -> anyhow::Result<()> {
+fn a_start_function_that_writes_an_unflattened_memory_stops_before_any_ctor() -> anyhow::Result<()>
+{
     let (outcome, out) = eval_file(
         CtorEvalOptions::new().all_features().add_ctor("test1"),
         CTOR_EVAL_START_STORE_WAT,
