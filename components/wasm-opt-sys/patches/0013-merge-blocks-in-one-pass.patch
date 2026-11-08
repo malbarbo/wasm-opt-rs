@@ -1,0 +1,113 @@
+Merge every child block of a block in one pass.
+
+`optimizeBlock` merged one child block at a time: it built the parent's whole
+list anew around that child, set it -- into the arena, which frees nothing --
+and started over from the first child. A block with k children to merge in a
+list of n costs n·k in time and in memory, and the children to merge are many
+where Binaryen reads a stack the way a compiler of a stack language writes it.
+A value pushed, then a local set, then the value consumed, is read as a block
+in the operand of what consumes it, with a scratch local; `merge-blocks` lifts
+that block out to a statement and then merges it into the function's body.
+A Java compiler's `aastore` is that shape -- the index pushed, the value, the
+value's local set before the index's -- and a resource bundle's
+`getContents()` holds thousands of them: on one program of 420 000 functions
+`--merge-blocks` alone peaked at 29 GB, and `wasm-ctor-eval` runs it after
+evaluating.
+
+Now one pass over the list merges every child that can be merged, building the
+new list once and setting it at the end. The items a merge brings in can be
+blocks to merge in turn, as before, so the pass is repeated while it merges,
+which is as many times as blocks are nested, not as there are children. What
+is merged, and what is dropped, is what it was: every decision reads the child
+alone, and a merged item is dropped when it is concrete and not last of the
+final list, which is also the last list the old loop set. Binaryen's tests of
+the pass print the same modules, and that program's module is written byte for
+byte the same, at 6.4 GB.
+
+--- a/src/passes/MergeBlocks.cpp
++++ b/src/passes/MergeBlocks.cpp
+@@ -286,6 +286,20 @@
+   bool changed = false;
+   while (more) {
+     more = false;
++    // Every child that can be merged is merged in this one pass, into a list
++    // built once and set at the end. Merging one child, setting the list and
++    // starting over is quadratic in the children merged, in time and in the
++    // arena, which frees nothing: a function of thousands of statements whose
++    // operands Binaryen read as blocks took gigabytes. The items a merge brings
++    // in may be blocks to merge themselves; the next pass meets them.
++    //
++    // The list being built, and how much of |list| is already in it. It is
++    // efficient to use a small vector here because most blocks are fairly
++    // small, and this way we copy once into the arena we use for Block lists a
++    // single time at the end (arena allocations can't be freed, so any
++    // temporary allocations while we add to the list would end up wasted).
++    SmallVector<Expression*, 10> merged;
++    size_t copied = 0;
+     for (size_t i = 0; i < list.size(); i++) {
+       auto* child = list[i];
+       // The child block, if there is one.
+@@ -380,16 +394,11 @@
+       }
+       // There is something to do!
+       bool keepingPart = keepStart < keepEnd;
+-      // Create a new merged list, and fill in the code before the child block
+-      // we are merging in. It is efficient to use a small vector here because
+-      // most blocks are fairly small, and this way we copy once into the arena
+-      // we use for Block lists a single time at the end (arena allocations
+-      // can't be freed, so any temporary allocations while we add to the list
+-      // would end up wasted).
+-      SmallVector<Expression*, 10> merged;
+-      for (size_t j = 0; j < i; j++) {
++      // Fill in the code before the child block we are merging in.
++      for (size_t j = copied; j < i; j++) {
+         merged.push_back(list[j]);
+       }
++      copied = i + 1;
+       // Add the head of the block - the things at the start we do
+       // not need to keep.
+       for (Index j = 0; j < keepStart; j++) {
+@@ -423,25 +432,27 @@
+         // from a child into the parent, but that doesn't change the total
+         // branches in the parent.)
+       }
+-      // Add the rest of the parent block after the child.
+-      for (size_t j = i + 1; j < list.size(); j++) {
+-        merged.push_back(list[j]);
+-      }
+-      // if we merged a concrete element in the middle, drop it
+-      if (!merged.empty()) {
+-        auto* last = merged.back();
+-        for (auto*& item : merged) {
+-          if (item != last && item->type.isConcrete()) {
+-            Builder builder(*module);
+-            item = builder.makeDrop(item);
+-          }
+-        }
+-      }
+-      list.set(merged);
+       more = true;
+       changed = true;
+-      break;
+     }
++    if (copied == 0) {
++      continue;
++    }
++    // Add the rest of the parent block after the last child merged.
++    for (size_t j = copied; j < list.size(); j++) {
++      merged.push_back(list[j]);
++    }
++    // if we merged a concrete element in the middle, drop it
++    if (!merged.empty()) {
++      auto* last = merged.back();
++      for (auto*& item : merged) {
++        if (item != last && item->type.isConcrete()) {
++          Builder builder(*module);
++          item = builder.makeDrop(item);
++        }
++      }
++    }
++    list.set(merged);
+   }
+   if (changed) {
+     curr->finalize(curr->type);

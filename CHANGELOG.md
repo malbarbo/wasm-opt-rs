@@ -116,6 +116,14 @@
   written.
 - A patch added to `components/wasm-opt-sys/patches/` now rebuilds Binaryen;
   only a change to one already there did.
+- `merge-blocks` merges every child block of a block in one pass over it,
+  rather than one child per pass with the whole list copied into the arena
+  each time. A function of thousands of statements whose operands Binaryen
+  reads as blocks -- a stack value consumed after a local set -- took
+  gigabytes: 29 GB on one module, which `wasm-ctor-eval` runs the pass over
+  after evaluating; now 6.4 GB, and the same module out. A patch may now
+  change any Binaryen source, a pass included: the patched copy is the one
+  compiled.
 
 ## 0.116.1
 

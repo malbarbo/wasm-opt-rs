@@ -17,7 +17,19 @@ fn main() -> anyhow::Result<()> {
     let src_files = get_src_files(&src_dir)?;
 
     // Our changes to binaryen, applied to copies under `OUT_DIR`.
-    let patched_src_dir = apply_patches(&src_dir)?;
+    let (patched_src_dir, patched_files) = apply_patches(&src_dir)?;
+
+    // A source a patch changes is compiled from its copy. The tools are named
+    // by their copies below; this is every other source, a pass say.
+    let src_files: Vec<PathBuf> = src_files
+        .into_iter()
+        .map(|file| match file.strip_prefix(&src_dir) {
+            Ok(rel) if patched_files.iter().any(|p| p.strip_prefix("src").ok() == Some(rel)) => {
+                patched_src_dir.join(rel)
+            }
+            _ => file,
+        })
+        .collect();
 
     // Binaryen's `support/suffix_tree` uses LLVM headers even when the DWARF
     // support is not built, so the include path is always needed.
@@ -117,7 +129,8 @@ fn main() -> anyhow::Result<()> {
 }
 
 /// Applies `patches/` to copies of the binaryen sources, and returns the
-/// directory holding them.
+/// directory holding them, and the files they are, as the patches name them
+/// (`src/...`).
 ///
 /// The copies mirror binaryen's `src/`, so that `patch -p1` finds its targets
 /// by the paths the patch names, and so that the directory can go on the
@@ -127,7 +140,7 @@ fn main() -> anyhow::Result<()> {
 ///
 /// This needs `patch` at build time, the way the build already needs a C++
 /// compiler.
-fn apply_patches(src_dir: &Path) -> anyhow::Result<PathBuf> {
+fn apply_patches(src_dir: &Path) -> anyhow::Result<(PathBuf, Vec<PathBuf>)> {
     let output_dir = std::env::var("OUT_DIR")?;
     let patched_dir = Path::new(&output_dir).join("patched-src");
 
@@ -173,7 +186,7 @@ fn apply_patches(src_dir: &Path) -> anyhow::Result<PathBuf> {
         }
     }
 
-    Ok(patched_dir.join("src"))
+    Ok((patched_dir.join("src"), copied))
 }
 
 /// The paths a patch changes, as `patch -p1` resolves them.
