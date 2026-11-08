@@ -12,6 +12,7 @@ static CTOR_EVAL_START_STORE_WAT: &str = "tests/ctor_eval_start_store.wat";
 static CTOR_EVAL_KEEP_GOING_WAT: &str = "tests/ctor_eval_keep_going.wat";
 static CTOR_EVAL_LONG_ARRAY_WAT: &str = "tests/ctor_eval_long_array.wat";
 static CTOR_EVAL_BYTE_ARRAY_WAT: &str = "tests/ctor_eval_byte_array.wat";
+static CTOR_EVAL_BYTE_ARRAYS_WAT: &str = "tests/ctor_eval_byte_arrays.wat";
 static CTOR_EVAL_PARTIAL_LOCAL_WAT: &str = "tests/ctor_eval_partial_local.wat";
 static CTOR_EVAL_MEMORIES_WAT: &str = "tests/ctor_eval_memories.wat";
 
@@ -458,6 +459,41 @@ fn an_array_smaller_as_data_is_filled_in_the_start_function() -> anyhow::Result<
     assert!(out.contains("(array.init_data $B"), "{}", out);
     assert!(out.contains(r#""hhhhhhhh"#), "{}", out);
     assert!(out.contains("(array.new_fixed $I 3"), "{}", out);
+
+    Ok(())
+}
+
+/// The fills of numbers share one segment, which V8 limits to 100 000 a module:
+/// each copy reads its values at their offset, and one drop follows the last.
+/// Evalling the module written again runs that start function, and reads back
+/// what the first evalling made.
+#[test]
+fn fills_of_numbers_share_one_segment() -> anyhow::Result<()> {
+    let temp_dir = Builder::new().prefix("wasm_ctor_eval_tests").tempdir()?;
+    let first = temp_dir.path().join("first.wasm");
+    let outcome = CtorEvalOptions::new()
+        .all_features()
+        .add_ctor("make")
+        .run(CTOR_EVAL_BYTE_ARRAYS_WAT, &first)?;
+    assert_eq!(outcome, CtorEvalOutcome::Finished);
+
+    let (outcome, out) = eval_file(
+        CtorEvalOptions::new()
+            .all_features()
+            .add_ctor("read")
+            .add_kept_export("read"),
+        first.to_str().unwrap(),
+    )?;
+    assert_eq!(outcome, CtorEvalOutcome::Finished);
+    assert!(out.contains("(i32.const 99098097)"), "{}", out);
+
+    let (_, out) = eval_file(
+        CtorEvalOptions::new().all_features().add_ctor("make"),
+        CTOR_EVAL_BYTE_ARRAYS_WAT,
+    )?;
+    assert_eq!(out.matches("(data $").count(), 1, "{}", out);
+    assert_eq!(out.matches("(array.init_data $B").count(), 2, "{}", out);
+    assert_eq!(out.matches("(data.drop").count(), 1, "{}", out);
 
     Ok(())
 }

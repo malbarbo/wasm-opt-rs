@@ -1,0 +1,80 @@
+Put the values of every fill of numbers in one passive data segment.
+
+Patches 0008 and 0009 give an array its values in the start function, from a
+passive segment of its own, which the start function then drops. A heap of
+many strings made as many segments: the module jwonder writes for a Hibernate
+program held 116 440, and V8 refuses a module of more than 100 000 data
+segments (`kV8MaxWasmDataSegments`).
+
+Once state is applied for the last time, the values of every fill of numbers
+go into one segment, in the order of the fills. Each `array.init_data` reads
+its values at their offset there, and one `data.drop` follows the last copy.
+The values copied and the order of the copies do not change. Element fills
+keep a segment each: few arrays hold more references than an
+`array.new_fixed` can.
+
+--- a/src/tools/wasm-ctor-eval.cpp	2026-11-08 00:09:31.878167050 -0300
++++ b/src/tools/wasm-ctor-eval.cpp	2026-11-08 00:09:42.609811485 -0300
+@@ -1363,6 +1363,46 @@
+     return init;
+   }
+ 
++  // V8 refuses a module of more data segments than 100 000
++  // (kV8MaxWasmDataSegments), and a fill of numbers is a segment of its own: a
++  // heap of many strings passed that. So once state is applied for the last
++  // time, the values of every such fill go into one passive segment, in the
++  // order of the fills, each copy reads its values at their offset there, and
++  // one drop follows the last copy, at the end of the start function's block.
++  // The segments of element fills stay as they are: a heap has few arrays of
++  // more references than an array.new_fixed holds.
++  void packFills() {
++    std::vector<Fill*> data;
++    for (auto& [_, fill] : fills) {
++      if (!fill.elem) {
++        data.push_back(&fill);
++      }
++    }
++    if (data.size() < 2) {
++      return;
++    }
++    Builder builder(*wasm);
++    auto packed = Names::getValidDataSegmentName(*wasm, "ctor-eval$fills");
++    std::unordered_set<Name> old;
++    std::vector<char> bytes;
++    for (auto* fill : data) {
++      auto& values = wasm->getDataSegment(fill->segment)->data;
++      auto* code = fill->code->cast<Block>();
++      auto* copy = code->list[0]->cast<ArrayInitData>();
++      copy->segment = packed;
++      copy->offset = builder.makeConst(int32_t(bytes.size()));
++      code->list.resize(1);
++      bytes.insert(bytes.end(), values.begin(), values.end());
++      old.insert(fill->segment);
++      fill->segment = packed;
++    }
++    wasm->removeDataSegments(
++      [&](DataSegment* segment) { return old.contains(segment->name); });
++    wasm->addDataSegment(builder.makeDataSegment(
++      packed, Name(), nullptr, bytes.data(), bytes.size()));
++    addStartCode(builder.makeDataDrop(packed));
++  }
++
+   void dropFill(Name global) {
+     auto it = fills.find(global);
+     if (it == fills.end()) {
+@@ -1920,6 +1960,7 @@
+         }
+         stopped = true;
+         stoppedAt = ctor;
++        interface.packFills();
+         return;
+       }
+ 
+@@ -1960,6 +2001,7 @@
+     if (!pending.empty()) {
+       apply();
+     }
++    interface.packFills();
+   } catch (FailToEvalException& fail) {
+     // That's it, we failed to even create the instance.
+     if (!quiet) {
