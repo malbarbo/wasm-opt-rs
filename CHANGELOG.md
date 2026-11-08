@@ -124,6 +124,12 @@
   after evaluating; now 6.4 GB, and the same module out. A patch may now
   change any Binaryen source, a pass included: the patched copy is the one
   compiled.
+- The arrays of numbers `wasm-ctor-eval` fills from the start function now
+  share one passive data segment, each `array.init_data` reading at its own
+  offset, with one `data.drop` at the end. Each fill had a segment of its own,
+  and a module with 116 440 of them was refused by V8, which accepts at most
+  100 000; that module now has 13 segments and is 689 KB smaller. Fills of
+  references keep an element segment each.
 
 ## 0.116.1
 
